@@ -55,7 +55,8 @@ const convertNumber = (num: number | string, format: string): string | number =>
 
   switch (format) {
     case 'roman': {
-      if (n <= 0) return '0';
+      if (n === 0) return 'N';
+      if (n < 0) return '-' + (convertNumber(-n, 'roman') as string);
       const vals: [string, number][] = [['M',1000],['CM',900],['D',500],['CD',400],['C',100],['XC',90],['L',50],['XL',40],['X',10],['IX',9],['V',5],['IV',4],['I',1]];
       let res = '', x = n;
       for (const [s, v] of vals) { while (x >= v) { res += s; x -= v; } }
@@ -63,7 +64,7 @@ const convertNumber = (num: number | string, format: string): string | number =>
     }
     case 'kanji':    return digitMap(['零','一','二','三','四','五','六','七','八','九']);
     case 'daiji':    return digitMap(['零','壱','弐','参','肆','伍','陸','漆','捌','玖']);
-    case 'indic':    return digitMap(['٠','١','٢','٣','٤','٥','٦','٧','٨','٩']); // 東アラビア数字
+    case 'indic':    return digitMap(['०','१','२','३','४','५','६','७','८','९']); // インド数字
     case 'thai':     return digitMap(['๐','๑','๒','๓','๔','๕','๖','๗','๘','๙']);
     case 'arabic_eastern': return digitMap(['٠','١','٢','٣','٤','٥','٦','٧','٨','٩']); // 東アラビア
     case 'fullwidth':return digitMap(['０','１','２','３','４','５','６','７','８','９']);
@@ -98,7 +99,8 @@ const convertNumber = (num: number | string, format: string): string | number =>
       const greekUnits  = ['','α','β','γ','δ','ε','ϛ','ζ','η','θ'];
       const greekTens   = ['','ι','κ','λ','μ','ν','ξ','ο','π','ϟ'];
       const greekHunds  = ['','ρ','σ','τ','υ','φ','χ','ψ','ω','ϡ'];
-      if (n <= 0) return '0';
+      if (n === 0) return '0';
+      if (n < 0) return '-' + (convertNumber(-n, 'greek') as string);
       let res = '';
       const h = Math.floor(n / 100) % 10;
       const t = Math.floor(n / 10) % 10;
@@ -245,42 +247,42 @@ const App = () => {
   const [translatedMap, setTranslatedMap] = useState<Record<string, string>>({});
 
   const ALL_NUMBER_FORMATS = [
-    { id: 'roman',      label: 'ローマ数字' },
-    { id: 'greek',      label: 'ギリシャ数字' },
-    { id: 'kanji',      label: '漢数字' },
-    { id: 'daiji',      label: '大字' },
-    { id: 'indic',      label: '東アラビア数字' },
-    { id: 'thai',       label: 'タイ数字' },
-    { id: 'indic',      label: '東アラビア数字' },
-    { id: 'fullwidth',  label: '全角数字' },
-    { id: 'circled',    label: '丸数字' },
-    { id: 'babylonian', label: 'バビロニア数字' },
-    { id: 'mayan',      label: 'マヤ数字' },
-    { id: 'egyptian',   label: 'エジプト数字' },
-    { id: 'devanagari', label: 'デーヴァナーガリー数字' },
-    { id: 'bengali',    label: 'ベンガル数字' },
-    { id: 'gujarati',   label: 'グジャラート数字' },
-    { id: 'gurmukhi',   label: 'グルムキー数字' },
-    { id: 'kannada',    label: 'カンナダ数字' },
-    { id: 'telugu',     label: 'テルグ数字' },
-    { id: 'malayalam',  label: 'マラヤーラム数字' },
-    { id: 'tibetan',    label: 'チベット数字' },
-    { id: 'myanmar',    label: 'ミャンマー数字' },
-    { id: 'khmer',      label: 'クメール数字' },
-    { id: 'lao',        label: 'ラオス数字' },
-    { id: 'mongolian',  label: 'モンゴル数字' },
-    { id: 'ethiopic',   label: 'エチオピア数字' },
-    { id: 'hebrew',     label: 'ヘブライ数字' },
-    { id: 'armenian',   label: 'アルメニア数字' },
-    { id: 'georgian',   label: 'ジョージア数字' },
-    { id: 'oriya',      label: 'オリヤー数字' },
-    { id: 'tamil',      label: 'タミル数字' },
-    { id: 'tai_tham',   label: 'ランナー数字' },
-    { id: 'sundanese',  label: 'スンダ数字' },
-    { id: 'balinese',   label: 'バリ数字' },
-    { id: 'javanese',   label: 'ジャワ数字' },
-    { id: 'cham',       label: 'チャム数字' },
-  ].filter((f, i, arr) => arr.findIndex(x => x.id === f.id) === i); // 重複除去
+    { id: 'roman',          label: 'ローマ数字' },
+    { id: 'greek',          label: 'ギリシャ数字' },
+    { id: 'kanji',          label: '漢数字' },
+    { id: 'daiji',          label: '大字' },
+    { id: 'indic',          label: 'インド数字' },
+    { id: 'thai',           label: 'タイ数字' },
+    { id: 'arabic_eastern', label: 'アラビア文字数字' },
+    { id: 'fullwidth',      label: '全角数字' },
+    { id: 'circled',        label: '丸数字' },
+    { id: 'devanagari',     label: 'デーヴァナーガリー数字' },
+    { id: 'bengali',        label: 'ベンガル数字' },
+    { id: 'gujarati',       label: 'グジャラート数字' },
+    { id: 'gurmukhi',       label: 'グルムキー数字' },
+    { id: 'kannada',        label: 'カンナダ数字' },
+    { id: 'telugu',         label: 'テルグ数字' },
+    { id: 'malayalam',      label: 'マラヤーラム数字' },
+    { id: 'tibetan',        label: 'チベット数字' },
+    { id: 'myanmar',        label: 'ミャンマー数字' },
+    { id: 'khmer',          label: 'クメール数字' },
+    { id: 'lao',            label: 'ラオス数字' },
+    { id: 'mongolian',      label: 'モンゴル数字' },
+    { id: 'oriya',          label: 'オリヤー数字' },
+    { id: 'tamil',          label: 'タミル数字' },
+    { id: 'tai_tham',       label: 'ランナー数字' },
+    { id: 'sundanese',      label: 'スンダ数字' },
+    { id: 'balinese',       label: 'バリ数字' },
+    { id: 'javanese',       label: 'ジャワ数字' },
+    { id: 'cham',           label: 'チャム数字' },
+    { id: 'babylonian',     label: 'バビロニア数字' },
+    { id: 'mayan',          label: 'マヤ数字' },
+    { id: 'egyptian',       label: 'エジプト数字' },
+    { id: 'ethiopic',       label: 'エチオピア数字' },
+    { id: 'hebrew',         label: 'ヘブライ数字' },
+    { id: 'armenian',       label: 'アルメニア数字' },
+    { id: 'georgian',       label: 'ジョージア数字' },
+  ];
 
   const ALL_LANGUAGES = [
     "アラビア語","イタリア語","インドネシア語","ウクライナ語","オランダ語",
