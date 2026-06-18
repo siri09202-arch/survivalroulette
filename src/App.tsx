@@ -15,22 +15,35 @@ declare const __firebase_config: string | undefined;
 declare const __initial_auth_token: string | undefined;
 declare const __app_id: string | undefined;
 
-const apiKey = "";
+
 
 const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
 let app: ReturnType<typeof initializeApp> | undefined;
 let auth: ReturnType<typeof getAuth> | undefined;
 let db: ReturnType<typeof getFirestore> | undefined;
-const hasFirebaseConfig = firebaseConfig && firebaseConfig.apiKey;
 
-if (hasFirebaseConfig) {
+// Firebase設定の初期化（__firebase_config またはlocalStorageから）
+const initFirebase = (cfg: any) => {
+  if (!cfg?.apiKey) return;
   try {
-    app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
+    const existingApp = getApps().find(a => a.name === '[DEFAULT]');
+    app = existingApp || initializeApp(cfg);
     auth = getAuth(app);
     db = getFirestore(app);
   } catch (e) { console.error("Firebase initialization failed:", e); }
+};
+
+// 起動時: __firebase_config またはlocalStorageから初期化
+const hasBuiltinConfig = firebaseConfig && firebaseConfig.apiKey;
+if (hasBuiltinConfig) {
+  initFirebase(firebaseConfig);
+} else {
+  try {
+    const stored = localStorage.getItem('firebase_config_json');
+    if (stored) { initFirebase(JSON.parse(stored)); }
+  } catch {}
 }
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'survival-roulette';
 
 interface Player {
   id: string; uid?: string; name: string; hp: number;
@@ -207,6 +220,10 @@ const convertNumber = (num: number | string, format: string): string | number =>
 
 const App = () => {
   const [user, setUser] = useState<any>(null);
+  // Firebase / Gemini 設定（localStorageで永続化）
+  const [geminiApiKey, setGeminiApiKey] = useState<string>(() => localStorage.getItem('gemini_api_key') || '');
+  const [firebaseConfigJson, setFirebaseConfigJson] = useState<string>(() => localStorage.getItem('firebase_config_json') || '');
+  const [showFirebaseSetup, setShowFirebaseSetup] = useState(false);
   const [phase, setPhase] = useState('home');
   const [isMultiplayer, setIsMultiplayer] = useState(false);
   const [currentRoomId, setCurrentRoomId] = useState<string | null>(null);
@@ -292,7 +309,8 @@ const App = () => {
   ];
 
   // diceConfig: min=ダイス面数下限, max=ダイス面数上限, diceCount=個数
-  const [diceConfig, setDiceConfig] = useState({ min: 1, max: 100, diceCount: 2 });
+  // diceConfig: minCount〜maxCount個のダイスをランダム個振る、各1〜diceMax面
+  const [diceConfig, setDiceConfig] = useState({ minCount: 2, maxCount: 2, faceMin: 1, faceMax: 100 });
   const [enabledFormats, setEnabledFormats] = useState(ALL_NUMBER_FORMATS.map(f => f.id));
   const [enabledLangs, setEnabledLangs] = useState(ALL_LANGUAGES);
 
@@ -320,7 +338,7 @@ const App = () => {
   // ===== Firebase Auth =====
   useEffect(() => {
     const initAuth = async () => {
-      if (!hasFirebaseConfig || !auth) return;
+      if ((!firebaseConfig?.apiKey && !localStorage.getItem('firebase_config_json')) || !auth) return;
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
           await signInWithCustomToken(auth, __initial_auth_token);
@@ -393,7 +411,11 @@ const App = () => {
     setInitialHP(s.initialHP); setSpinDuration(s.spinDuration); setHealInterval(s.healInterval);
     setIsHpBalanceEnabled(s.isHpBalanceEnabled); setIsSpecialEventEnabled(s.isSpecialEventEnabled);
     setSpecialEventProb(s.specialEventProb); setEnabledSpecialEvents(s.enabledSpecialEvents);
-    setDiceConfig(s.diceConfig); setEnabledFormats(s.enabledFormats); setEnabledLangs(s.enabledLangs);
+    // diceConfigの後方互換性（旧形式 {min,max,diceCount} → 新形式 {minCount,maxCount,faceMin,faceMax}）
+    if (s.diceConfig) {
+      if ('minCount' in s.diceConfig) { setDiceConfig(s.diceConfig); }
+      else { setDiceConfig({ minCount: s.diceConfig.diceCount||2, maxCount: s.diceConfig.diceCount||2, faceMin: s.diceConfig.min||1, faceMax: s.diceConfig.max||100 }); }
+    } setEnabledFormats(s.enabledFormats); setEnabledLangs(s.enabledLangs);
     setConfig(s.config); setReviveEvents(s.reviveEvents);
   };
 
@@ -417,13 +439,13 @@ const App = () => {
 
   // ===== 翻訳（APIキーなければ元の名前を返す） =====
   const generateTranslatedName = async (name: string, targetLang: string): Promise<string> => {
-    if (targetLang === 'default' || !isSpecialEventEnabled || !apiKey) return name;
+    if (targetLang === 'default' || !isSpecialEventEnabled || !geminiApiKey) return name;
     // キャッシュ確認
     const cacheKey = `${name}__${targetLang}`;
     if (translatedMap[cacheKey]) return translatedMap[cacheKey];
     try {
       const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiApiKey}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -442,7 +464,7 @@ const App = () => {
 
   // ===== 全プレイヤー名を事前翻訳（スピン前に呼ぶ） =====
   const prefetchTranslations = async (targetLang: string, targetPlayers: Player[]) => {
-    if (targetLang === 'default' || !apiKey) return;
+    if (targetLang === 'default' || !geminiApiKey) return;
     await Promise.all(targetPlayers.map(p => generateTranslatedName(p.name, targetLang)));
   };
 
@@ -461,20 +483,24 @@ const App = () => {
   };
 
   // ===== ダイス生成（Nd : diceCount個, 各1〜max面） =====
-  const generateDiceAmount = (): { rolls: number[]; total: number } => {
-    const count = Math.max(2, diceConfig.diceCount);
+  const generateDiceAmount = (): { rolls: number[]; total: number; faceMax: number } => {
+    const count = Math.min(diceConfig.maxCount, Math.max(diceConfig.minCount,
+      diceConfig.minCount + Math.floor(Math.random() * (diceConfig.maxCount - diceConfig.minCount + 1))));
     const rolls: number[] = [];
     for (let i = 0; i < count; i++) {
-      rolls.push(Math.floor(Math.random() * (diceConfig.max - diceConfig.min + 1)) + diceConfig.min);
+      rolls.push(Math.floor(Math.random() * (diceConfig.faceMax - diceConfig.faceMin + 1)) + diceConfig.faceMin);
     }
-    return { rolls, total: rolls.reduce((s, v) => s + v, 0) };
+    return { rolls, total: rolls.reduce((s, v) => s + v, 0), faceMax: diceConfig.faceMax };
   };
 
   // ===== ダイス表示文字列 =====
-  const formatDiceDisplay = (rolls: number[], fmt: string): string => {
-    const parts = rolls.map(v => String(convertNumber(v, fmt)));
+  const formatDiceDisplay = (rolls: number[], fmt: string, faceMax?: number): string => {
     const total = rolls.reduce((s, v) => s + v, 0);
-    return parts.join(' ＋ ') + ' ＝ ' + String(convertNumber(total, fmt));
+    const fMax = faceMax ?? diceConfig.faceMax;
+    const fMin = diceConfig.faceMin;
+    const totalStr = String(convertNumber(total, fmt));
+    const diceNotation = `${rolls.length}d${fMin > 1 ? fMin + '~' : ''}${fMax}`;
+    return `${totalStr}  [${diceNotation}]`;
   };
 
   const copyToClipboard = (text: string, setFeedback: (v: boolean) => void) => {
@@ -639,9 +665,9 @@ const App = () => {
         const prefix = isReverse ? '【以外】' : (isMulti ? '【複数】' : '');
         // スピン中はランダムなダイス値をアニメーション表示
         const spinRolls = Array.from({ length: diceResult.rolls.length }, () =>
-          Math.floor(Math.random() * (diceConfig.max - diceConfig.min + 1)) + diceConfig.min
+          Math.floor(Math.random() * (diceConfig.faceMax - diceConfig.faceMin + 1)) + diceConfig.faceMin
         );
-        setDisplayResult({ player: `${prefix}${nameDisp}`, amount: formatDiceDisplay(spinRolls, localNumberFmt) });
+        setDisplayResult({ player: `${prefix}${nameDisp}`, amount: formatDiceDisplay(spinRolls, localNumberFmt, diceResult.faceMax) });
       } else {
         const prefix = isReverse ? '【以外】' : (isMulti ? '【複数】' : '');
         setDisplayResult({ player: `${prefix}${nameDisp}`, amount: String(convertNumber(generateAmount(), localNumberFmt)) });
@@ -683,7 +709,7 @@ const App = () => {
     isInstantDeath: boolean,
     isReverseHealDamage: boolean,
     isDice: boolean,
-    diceResult: { rolls: number[]; total: number } | null,
+    diceResult: { rolls: number[]; total: number; faceMax: number } | null,
     fmt: string,
     nameLang: string,
     isNameTrans: boolean
@@ -756,7 +782,7 @@ const App = () => {
 
       const revMsg = isReverseHealDamage ? '(効果反転)' : '';
       const amountForDisplay = diceRolls
-        ? formatDiceDisplay(diceRolls, fmt)
+        ? formatDiceDisplay(diceRolls, fmt, diceResult?.faceMax)
         : String(convertNumber(finalAmount as number, fmt));
       // ログ用は合計値のみ
       const amountForLog = finalAmount as number;
@@ -943,7 +969,14 @@ const App = () => {
 
   // ===== Multiplayer ルーム操作 =====
   const handleCreateRoom = async () => {
-    if (!user || !db) return;
+    // Firebase未初期化時はlocalStorageから再試行
+    if (!db) {
+      try {
+        const stored = localStorage.getItem('firebase_config_json');
+        if (stored) { initFirebase(JSON.parse(stored)); }
+      } catch {}
+    }
+    if (!user || !db) { alert('Firebase設定が見つかりません。設定画面でFirebase Configを入力してください。'); return; }
     try {
       const roomId = Math.random().toString(36).substring(2, 7).toUpperCase();
       await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomId), {
@@ -1084,9 +1117,74 @@ const App = () => {
         <h1 className="text-5xl md:text-7xl font-black italic tracking-tighter text-white drop-shadow-2xl mb-12 uppercase leading-none">Survival<br/><span className="text-indigo-400">Roulette</span></h1>
         <div className="flex flex-col gap-4">
           <button onClick={() => { setIsMultiplayer(false); setPhase('setup'); }} className="w-full py-5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-black text-2xl transition-all shadow-[0_0_30px_rgba(79,70,229,0.4)] flex items-center justify-center gap-3"><Users size={24}/> ひとりで遊ぶ</button>
-          <button onClick={() => setPhase('multi_menu')} className="w-full py-5 bg-slate-900 border-2 border-slate-700 hover:border-indigo-500 hover:bg-slate-800 text-slate-300 hover:text-white rounded-2xl font-black text-2xl transition-all flex items-center justify-center gap-3"><Activity size={24}/> みんなで遊ぶ</button>
+          <button onClick={() => { if (!firebaseConfigJson.trim()) { setShowFirebaseSetup(true); } else { setPhase('multi_menu'); } }} className="w-full py-5 bg-slate-900 border-2 border-slate-700 hover:border-indigo-500 hover:bg-slate-800 text-slate-300 hover:text-white rounded-2xl font-black text-2xl transition-all flex items-center justify-center gap-3"><Activity size={24}/> みんなで遊ぶ</button>
+          <button onClick={() => setShowFirebaseSetup(true)} className="w-full py-3 bg-transparent border border-slate-800 hover:border-slate-600 text-slate-600 hover:text-slate-400 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2">
+            <Settings2 size={16}/> {firebaseConfigJson ? '🟢 Firebase設定済み' : '⚙️ Firebase / Gemini API 設定'}
+          </button>
         </div>
       </div>
+      {showFirebaseSetup && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-[2rem] p-8 w-full max-w-lg shadow-2xl space-y-6">
+            <div className="text-center">
+              <h2 className="text-2xl font-black italic tracking-tighter text-white uppercase">設定</h2>
+              <p className="text-slate-400 text-xs font-bold mt-1">Firebase / Gemini API の設定</p>
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                <Activity size={12}/> Firebase Config (JSON)
+              </label>
+              <p className="text-[9px] text-slate-500">Firebase Console → プロジェクト設定 → マイアプリ → 構成 からコピー</p>
+              <textarea
+                value={firebaseConfigJson}
+                onChange={e => setFirebaseConfigJson(e.target.value)}
+                onBlur={() => {
+                  const trimmed = firebaseConfigJson.trim();
+                  if (trimmed) {
+                    try { JSON.parse(trimmed); localStorage.setItem('firebase_config_json', trimmed); } catch {}
+                  } else { localStorage.removeItem('firebase_config_json'); }
+                }}
+                placeholder={`{\n  "apiKey": "...",\n  "authDomain": "...",\n  "projectId": "..."\n}`}
+                rows={6}
+                className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl p-3 text-[10px] font-mono text-slate-300 outline-none resize-none custom-scrollbar"
+              />
+              {firebaseConfigJson.trim() && (() => { try { JSON.parse(firebaseConfigJson.trim()); return <p className="text-[9px] text-emerald-400 font-bold">✓ 有効なJSON</p>; } catch { return <p className="text-[9px] text-red-400 font-bold">✗ JSONが無効です</p>; } })()}
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                <Languages size={12}/> Gemini API Key (名前の多言語化)
+              </label>
+              <p className="text-[9px] text-slate-500">Google AI Studio → API Keys からコピー（未入力だと名前翻訳は無効）</p>
+              <input
+                type="password"
+                value={geminiApiKey}
+                onChange={e => setGeminiApiKey(e.target.value)}
+                onBlur={() => { if (geminiApiKey.trim()) localStorage.setItem('gemini_api_key', geminiApiKey.trim()); else localStorage.removeItem('gemini_api_key'); }}
+                onKeyDown={e => { if (e.key === 'Enter') { (e.target as HTMLInputElement).blur(); }}}
+                placeholder="AIza..."
+                className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl p-3 text-sm font-mono text-slate-300 outline-none"
+              />
+              {geminiApiKey.trim() && <p className="text-[9px] text-emerald-400 font-bold">✓ APIキー設定済み</p>}
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => { setShowFirebaseSetup(false); }} className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-black text-sm transition-all">キャンセル</button>
+              <button onClick={() => {
+                const trimmed = firebaseConfigJson.trim();
+                let valid = false;
+                if (trimmed) { try { const parsed = JSON.parse(trimmed); valid = !!parsed.apiKey; } catch {} }
+                if (valid) {
+                  localStorage.setItem('firebase_config_json', trimmed);
+                  if (geminiApiKey.trim()) localStorage.setItem('gemini_api_key', geminiApiKey.trim());
+                  setShowFirebaseSetup(false);
+                  setPhase('multi_menu');
+                } else {
+                  alert('有効なFirebase ConfigのJSONを入力してください（apiKeyが必須）');
+                }
+              }} className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-black text-sm transition-all">保存して続ける</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 
@@ -1218,7 +1316,7 @@ const App = () => {
                   <div className="p-3 bg-slate-950 rounded-2xl border border-slate-800 space-y-3">
                     <div>
                       <label className="text-[8px] font-black text-slate-500 tracking-widest block mb-1 uppercase">チーム数</label>
-                      <input type="number" min="2" max="6" value={teamCount} onChange={e => setTeamCount(parseInt(e.target.value)||2)} className="bg-transparent text-xl font-black w-full outline-none text-indigo-400 tabular-nums"/>
+                      <input type="number" min="2" max="6" value={teamCount} onChange={e => setTeamCount(parseInt(e.target.value)||2)} onKeyDown={e => e.key==='Enter' && setTeamCount(Math.max(2,Math.min(6,parseInt((e.target as HTMLInputElement).value)||2)))} className="bg-transparent text-xl font-black w-full outline-none text-indigo-400 tabular-nums"/>
                     </div>
                     <div className="space-y-2 pt-2 border-t border-slate-800">
                       <label className="text-[8px] font-black text-slate-500 tracking-widest block mb-1 uppercase flex items-center gap-1"><Edit3 size={8}/> チーム名設定</label>
@@ -1231,10 +1329,10 @@ const App = () => {
                   </div>
                 )}
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="p-3 bg-slate-950 rounded-2xl border border-slate-800"><label className="text-[8px] font-black text-slate-500 block mb-1 uppercase">初期HP</label><input type="number" value={initialHP} onChange={e => setInitialHP(Math.max(1, parseInt(e.target.value)||1))} className="bg-transparent text-lg font-black w-full outline-none text-indigo-400"/></div>
-                  <div className="p-3 bg-slate-950 rounded-2xl border border-slate-800"><label className="text-[8px] font-black text-slate-500 block mb-1 uppercase">速度 (秒)</label><input type="number" step="0.1" value={spinDuration} onChange={e => setSpinDuration(Math.max(0.1, parseFloat(e.target.value)||0.1))} className="bg-transparent text-lg font-black w-full outline-none text-amber-500"/></div>
+                  <div className="p-3 bg-slate-950 rounded-2xl border border-slate-800"><label className="text-[8px] font-black text-slate-500 block mb-1 uppercase">初期HP</label><input type="number" value={initialHP} onChange={e => setInitialHP(Math.max(1, parseInt(e.target.value)||1))} onKeyDown={e => e.key==='Enter' && setInitialHP(Math.max(1, parseInt((e.target as HTMLInputElement).value)||1))} className="bg-transparent text-lg font-black w-full outline-none text-indigo-400"/></div>
+                  <div className="p-3 bg-slate-950 rounded-2xl border border-slate-800"><label className="text-[8px] font-black text-slate-500 block mb-1 uppercase">速度 (秒)</label><input type="number" step="0.1" value={spinDuration} onChange={e => setSpinDuration(Math.max(0.1, parseFloat(e.target.value)||0.1))} onKeyDown={e => e.key==='Enter' && setSpinDuration(Math.max(0.1, parseFloat((e.target as HTMLInputElement).value)||0.1))} className="bg-transparent text-lg font-black w-full outline-none text-amber-500"/></div>
                 </div>
-                <div className="p-3 bg-slate-950 rounded-2xl border border-slate-800"><label className="text-[8px] font-black text-slate-500 block mb-1 uppercase">回復頻度 (ターン)</label><input type="number" value={healInterval} onChange={e => setHealInterval(Math.max(1, parseInt(e.target.value)||1))} className="bg-transparent text-lg font-black w-full outline-none text-emerald-500"/></div>
+                <div className="p-3 bg-slate-950 rounded-2xl border border-slate-800"><label className="text-[8px] font-black text-slate-500 block mb-1 uppercase">回復頻度 (ターン)</label><input type="number" value={healInterval} onChange={e => setHealInterval(Math.max(1, parseInt(e.target.value)||1))} onKeyDown={e => e.key==='Enter' && setHealInterval(Math.max(1, parseInt((e.target as HTMLInputElement).value)||1))} className="bg-transparent text-lg font-black w-full outline-none text-emerald-500"/></div>
                 <div className="space-y-2">
                   <button onClick={() => setIsHpBalanceEnabled(!isHpBalanceEnabled)} className={`w-full p-3 rounded-2xl border flex items-center justify-between transition-all ${isHpBalanceEnabled ? 'bg-emerald-600/10 border-emerald-500 text-white' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
                     <span className="text-[10px] font-black uppercase tracking-widest flex items-center gap-2"><Scale size={14}/> HPバランス調整</span>
@@ -1258,7 +1356,7 @@ const App = () => {
                           { id: 'reverseMode',       label: 'リバース (以外全員)',           icon: <RotateCcw size={10}/> },
                           { id: 'multiMode',         label: 'マルチ (複数名同時)',           icon: <Users size={10}/> },
                           { id: 'feint',             label: 'ルーレットフェイント',           icon: <Zap size={10}/> },
-                          { id: 'diceMode',          label: `ダイスルーレット (${diceConfig.diceCount}個 ${diceConfig.min}〜${diceConfig.max}面)`, icon: <Percent size={10}/> },
+                          { id: 'diceMode',          label: `ダイスルーレット (${diceConfig.minCount}${diceConfig.minCount!==diceConfig.maxCount?'~'+diceConfig.maxCount:''}d${diceConfig.faceMin>1?diceConfig.faceMin+'~':''}${diceConfig.faceMax})`, icon: <Percent size={10}/> },
                           { id: 'numberFormat',      label: '特殊数値形式',                 icon: <Type size={10}/> },
                           { id: 'nameTranslation',   label: '名前の多言語化',               icon: <Languages size={10}/> },
                           { id: 'reverseHealDamage', label: '回復・ダメージ逆転',           icon: <RotateCcw size={10}/> },
@@ -1271,14 +1369,37 @@ const App = () => {
                               <div className={`w-2 h-2 rounded-full ${enabledSpecialEvents.includes(ev.id) ? 'bg-purple-500 shadow-[0_0_8px_rgba(168,85,247,0.6)]' : 'bg-slate-700'}`}/>
                             </button>
                             {enabledSpecialEvents.includes(ev.id) && ev.id === 'diceMode' && (
-                              <div className="pl-4 pr-2 py-2 bg-slate-900/50 rounded-b-xl border border-purple-500/50 border-t-0 flex items-center gap-2 flex-wrap">
-                                <span className="text-[9px] text-slate-400">個数:</span>
-                                <input type="number" min="2" max="10" value={diceConfig.diceCount} onChange={e => setDiceConfig({...diceConfig, diceCount: Math.max(2, parseInt(e.target.value)||2)})} className="w-10 bg-slate-950 border border-slate-800 rounded px-1 text-[10px] text-white"/>
-                                <span className="text-slate-400 text-[10px]">個</span>
-                                <span className="text-[9px] text-slate-400 ml-2">面数:</span>
-                                <input type="number" value={diceConfig.min} onChange={e => setDiceConfig({...diceConfig, min: parseInt(e.target.value)||1})} className="w-14 bg-slate-950 border border-slate-800 rounded px-1 text-[10px] text-white"/>
-                                <span className="text-slate-400 text-[10px]">〜</span>
-                                <input type="number" value={diceConfig.max} onChange={e => setDiceConfig({...diceConfig, max: parseInt(e.target.value)||1})} className="w-14 bg-slate-950 border border-slate-800 rounded px-1 text-[10px] text-white"/>
+                              <div className="pl-4 pr-2 py-2 bg-slate-900/50 rounded-b-xl border border-purple-500/50 border-t-0 space-y-1.5">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-[9px] text-slate-400 w-10 shrink-0">個数:</span>
+                                  <input type="number" min="1" max="20" value={diceConfig.minCount}
+                                    onChange={e => setDiceConfig(p => ({...p, minCount: parseInt(e.target.value)||1}))}
+                                    onBlur={e => setDiceConfig(p => ({...p, minCount: Math.max(1,Math.min(p.maxCount, parseInt(e.target.value)||1))}))}
+                                    onKeyDown={e => e.key==='Enter'&&setDiceConfig(p => ({...p, minCount: Math.max(1,Math.min(p.maxCount, parseInt((e.target as HTMLInputElement).value)||1))}))}
+                                    className="w-10 bg-slate-950 border border-slate-800 rounded px-1 text-[10px] text-white text-center"/>
+                                  <span className="text-slate-400 text-[9px]">〜</span>
+                                  <input type="number" min="1" max="20" value={diceConfig.maxCount}
+                                    onChange={e => setDiceConfig(p => ({...p, maxCount: parseInt(e.target.value)||1}))}
+                                    onBlur={e => setDiceConfig(p => ({...p, maxCount: Math.max(p.minCount, parseInt(e.target.value)||1)}))}
+                                    onKeyDown={e => e.key==='Enter'&&setDiceConfig(p => ({...p, maxCount: Math.max(p.minCount, parseInt((e.target as HTMLInputElement).value)||1)}))}
+                                    className="w-10 bg-slate-950 border border-slate-800 rounded px-1 text-[10px] text-white text-center"/>
+                                  <span className="text-slate-400 text-[9px]">個</span>
+                                </div>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-[9px] text-slate-400 w-10 shrink-0">面数:</span>
+                                  <input type="number" min="1" value={diceConfig.faceMin}
+                                    onChange={e => setDiceConfig(p => ({...p, faceMin: parseInt(e.target.value)||1}))}
+                                    onBlur={e => setDiceConfig(p => ({...p, faceMin: Math.max(1,Math.min(p.faceMax, parseInt(e.target.value)||1))}))}
+                                    onKeyDown={e => e.key==='Enter'&&setDiceConfig(p => ({...p, faceMin: Math.max(1,Math.min(p.faceMax, parseInt((e.target as HTMLInputElement).value)||1))}))}
+                                    className="w-14 bg-slate-950 border border-slate-800 rounded px-1 text-[10px] text-white text-center"/>
+                                  <span className="text-slate-400 text-[9px]">〜</span>
+                                  <input type="number" min="1" value={diceConfig.faceMax}
+                                    onChange={e => setDiceConfig(p => ({...p, faceMax: parseInt(e.target.value)||1}))}
+                                    onBlur={e => setDiceConfig(p => ({...p, faceMax: Math.max(p.faceMin, parseInt(e.target.value)||1)}))}
+                                    onKeyDown={e => e.key==='Enter'&&setDiceConfig(p => ({...p, faceMax: Math.max(p.faceMin, parseInt((e.target as HTMLInputElement).value)||1)}))}
+                                    className="w-14 bg-slate-950 border border-slate-800 rounded px-1 text-[10px] text-white text-center"/>
+                                  <span className="text-slate-400 text-[9px]">面</span>
+                                </div>
                               </div>
                             )}
                             {enabledSpecialEvents.includes(ev.id) && ev.id === 'numberFormat' && (
@@ -1493,7 +1614,7 @@ const App = () => {
   const isHost = isMultiplayer ? (user?.uid === roomHostId) : true;
 
   // ダイス表示かどうか
-  const isDiceDisplay = typeof displayResult.amount === 'string' && String(displayResult.amount).includes('＋');
+  const isDiceDisplay = typeof displayResult.amount === 'string' && String(displayResult.amount).includes('[') && String(displayResult.amount).includes('d');
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-4 md:p-6 flex flex-col md:flex-row gap-6 max-w-[1500px] mx-auto font-sans md:overflow-hidden md:h-screen">
