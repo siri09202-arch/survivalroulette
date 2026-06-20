@@ -220,10 +220,7 @@ const convertNumber = (num: number | string, format: string): string | number =>
 
 const App = () => {
   const [user, setUser] = useState<any>(null);
-  // Firebase / Gemini 設定（localStorageで永続化）
-  const [geminiApiKey, setGeminiApiKey] = useState<string>(() => localStorage.getItem('gemini_api_key') || '');
-  const [firebaseConfigJson, setFirebaseConfigJson] = useState<string>(() => localStorage.getItem('firebase_config_json') || '');
-  const [showFirebaseSetup, setShowFirebaseSetup] = useState(false);
+  const geminiApiKey = ''; // APIキーUI廃止: 翻訳機能は維持するが設定UIなし
   const [phase, setPhase] = useState('home');
   const [isMultiplayer, setIsMultiplayer] = useState(false);
   const [currentRoomId, setCurrentRoomId] = useState<string | null>(null);
@@ -338,7 +335,7 @@ const App = () => {
   // ===== Firebase Auth =====
   useEffect(() => {
     const initAuth = async () => {
-      if ((!firebaseConfig?.apiKey && !localStorage.getItem('firebase_config_json')) || !auth) return;
+      if (!firebaseConfig?.apiKey || !auth) return;
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
           await signInWithCustomToken(auth, __initial_auth_token);
@@ -439,7 +436,7 @@ const App = () => {
 
   // ===== 翻訳（APIキーなければ元の名前を返す） =====
   const generateTranslatedName = async (name: string, targetLang: string): Promise<string> => {
-    if (targetLang === 'default' || !isSpecialEventEnabled || !geminiApiKey) return name;
+    if (targetLang === 'default' || !isSpecialEventEnabled) return name;
     // キャッシュ確認
     const cacheKey = `${name}__${targetLang}`;
     if (translatedMap[cacheKey]) return translatedMap[cacheKey];
@@ -464,7 +461,7 @@ const App = () => {
 
   // ===== 全プレイヤー名を事前翻訳（スピン前に呼ぶ） =====
   const prefetchTranslations = async (targetLang: string, targetPlayers: Player[]) => {
-    if (targetLang === 'default' || !geminiApiKey) return;
+    if (targetLang === 'default') return;
     await Promise.all(targetPlayers.map(p => generateTranslatedName(p.name, targetLang)));
   };
 
@@ -969,14 +966,7 @@ const App = () => {
 
   // ===== Multiplayer ルーム操作 =====
   const handleCreateRoom = async () => {
-    // Firebase未初期化時はlocalStorageから再試行
-    if (!db) {
-      try {
-        const stored = localStorage.getItem('firebase_config_json');
-        if (stored) { initFirebase(JSON.parse(stored)); }
-      } catch {}
-    }
-    if (!user || !db) { alert('Firebase設定が見つかりません。設定画面でFirebase Configを入力してください。'); return; }
+    if (!user || !db) { alert('Firebase接続に失敗しました。ページを再読み込みしてください。'); return; }
     try {
       const roomId = Math.random().toString(36).substring(2, 7).toUpperCase();
       await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomId), {
@@ -991,36 +981,32 @@ const App = () => {
       setCurrentRoomId(roomId); setRoomHostId(user.uid); setPhase('multi_name');
     } catch (e) { console.error('Room creation failed', e); }
   };
-  const handleJoinRoomStep1 = async () => {
-    if (!joinRoomIdInput.trim() || !db) return;
+  const handleJoinRoomFinal = async (overrideRoomId?: string, overrideName?: string) => {
+    const roomIdToUse = (overrideRoomId ?? joinRoomIdInput).trim().toUpperCase();
+    const nameToUse = (overrideName ?? playerNameInput).trim();
+    if (!roomIdToUse || !nameToUse || !user || !db) return;
     try {
-      const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', joinRoomIdInput.toUpperCase()));
-      if (snap.exists() && snap.data().status === 'joining') {
-        setCurrentRoomId(joinRoomIdInput.toUpperCase());
-        syncSettingsFromRoom(snap.data().settings);
-        setJoinError(''); setPhase('multi_name');
-      } else { setJoinError('無効なルームIDか、すでに開始されています。'); }
-    } catch { setJoinError('ルーム情報の取得に失敗しました。'); }
-  };
-  const handleJoinRoomFinal = async () => {
-    if (!playerNameInput.trim() || !currentRoomId || !user || !db) return;
-    try {
-      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId);
+      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomIdToUse);
       const snap = await getDoc(roomRef);
-      if (snap.exists()) {
-        const rd = snap.data();
-        if (!rd.players.find((p: Player) => p.uid === user.uid)) {
-          const ti = rd.settings.mode === 'team' ? (rd.players.length % rd.settings.teamCount) : 0;
-          await updateDoc(roomRef, { players: [...rd.players, {
-            id: `p-${Date.now()}-${user.uid}`, uid: user.uid,
-            name: playerNameInput.trim(), hp: rd.settings.initialHP,
-            status: 'alive', teamIndex: ti,
-            team: rd.settings.mode === 'team' ? (rd.settings.teamNames[ti] || `チーム${String.fromCharCode(65+ti)}`) : null
-          }] });
-        }
-        setPhase('multi_lobby');
+      if (!snap.exists() || snap.data().status !== 'joining') {
+        setJoinError('無効なルームIDか、すでに開始されています。');
+        return;
       }
-    } catch (e) { console.error('Joining room failed', e); }
+      setCurrentRoomId(roomIdToUse);
+      syncSettingsFromRoom(snap.data().settings);
+      const rd = snap.data();
+      if (!rd.players.find((p: Player) => p.uid === user.uid)) {
+        const ti = rd.settings.mode === 'team' ? (rd.players.length % rd.settings.teamCount) : 0;
+        await updateDoc(roomRef, { players: [...rd.players, {
+          id: `p-${Date.now()}-${user.uid}`, uid: user.uid,
+          name: nameToUse, hp: rd.settings.initialHP,
+          status: 'alive', teamIndex: ti,
+          team: rd.settings.mode === 'team' ? (rd.settings.teamNames[ti] || `チーム${String.fromCharCode(65+ti)}`) : null
+        }] });
+      }
+      setJoinError('');
+      setPhase('multi_lobby');
+    } catch (e) { console.error('Joining room failed', e); setJoinError('ルーム情報の取得に失敗しました。'); }
   };
 
   const startGameSingle = () => {
@@ -1117,74 +1103,9 @@ const App = () => {
         <h1 className="text-5xl md:text-7xl font-black italic tracking-tighter text-white drop-shadow-2xl mb-12 uppercase leading-none">Survival<br/><span className="text-indigo-400">Roulette</span></h1>
         <div className="flex flex-col gap-4">
           <button onClick={() => { setIsMultiplayer(false); setPhase('setup'); }} className="w-full py-5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-black text-2xl transition-all shadow-[0_0_30px_rgba(79,70,229,0.4)] flex items-center justify-center gap-3"><Users size={24}/> ひとりで遊ぶ</button>
-          <button onClick={() => { if (!firebaseConfigJson.trim()) { setShowFirebaseSetup(true); } else { setPhase('multi_menu'); } }} className="w-full py-5 bg-slate-900 border-2 border-slate-700 hover:border-indigo-500 hover:bg-slate-800 text-slate-300 hover:text-white rounded-2xl font-black text-2xl transition-all flex items-center justify-center gap-3"><Activity size={24}/> みんなで遊ぶ</button>
-          <button onClick={() => setShowFirebaseSetup(true)} className="w-full py-3 bg-transparent border border-slate-800 hover:border-slate-600 text-slate-600 hover:text-slate-400 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2">
-            <Settings2 size={16}/> {firebaseConfigJson ? '🟢 Firebase設定済み' : '⚙️ Firebase / Gemini API 設定'}
-          </button>
+          <button onClick={() => setPhase('multi_menu')} className="w-full py-5 bg-slate-900 border-2 border-slate-700 hover:border-indigo-500 hover:bg-slate-800 text-slate-300 hover:text-white rounded-2xl font-black text-2xl transition-all flex items-center justify-center gap-3"><Activity size={24}/> みんなで遊ぶ</button>
         </div>
       </div>
-      {showFirebaseSetup && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-[2rem] p-8 w-full max-w-lg shadow-2xl space-y-6">
-            <div className="text-center">
-              <h2 className="text-2xl font-black italic tracking-tighter text-white uppercase">設定</h2>
-              <p className="text-slate-400 text-xs font-bold mt-1">Firebase / Gemini API の設定</p>
-            </div>
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                <Activity size={12}/> Firebase Config (JSON)
-              </label>
-              <p className="text-[9px] text-slate-500">Firebase Console → プロジェクト設定 → マイアプリ → 構成 からコピー</p>
-              <textarea
-                value={firebaseConfigJson}
-                onChange={e => setFirebaseConfigJson(e.target.value)}
-                onBlur={() => {
-                  const trimmed = firebaseConfigJson.trim();
-                  if (trimmed) {
-                    try { JSON.parse(trimmed); localStorage.setItem('firebase_config_json', trimmed); } catch {}
-                  } else { localStorage.removeItem('firebase_config_json'); }
-                }}
-                placeholder={`{\n  "apiKey": "...",\n  "authDomain": "...",\n  "projectId": "..."\n}`}
-                rows={6}
-                className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl p-3 text-[10px] font-mono text-slate-300 outline-none resize-none custom-scrollbar"
-              />
-              {firebaseConfigJson.trim() && (() => { try { JSON.parse(firebaseConfigJson.trim()); return <p className="text-[9px] text-emerald-400 font-bold">✓ 有効なJSON</p>; } catch { return <p className="text-[9px] text-red-400 font-bold">✗ JSONが無効です</p>; } })()}
-            </div>
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                <Languages size={12}/> Gemini API Key (名前の多言語化)
-              </label>
-              <p className="text-[9px] text-slate-500">Google AI Studio → API Keys からコピー（未入力だと名前翻訳は無効）</p>
-              <input
-                type="password"
-                value={geminiApiKey}
-                onChange={e => setGeminiApiKey(e.target.value)}
-                onBlur={() => { if (geminiApiKey.trim()) localStorage.setItem('gemini_api_key', geminiApiKey.trim()); else localStorage.removeItem('gemini_api_key'); }}
-                onKeyDown={e => { if (e.key === 'Enter') { (e.target as HTMLInputElement).blur(); }}}
-                placeholder="AIza..."
-                className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl p-3 text-sm font-mono text-slate-300 outline-none"
-              />
-              {geminiApiKey.trim() && <p className="text-[9px] text-emerald-400 font-bold">✓ APIキー設定済み</p>}
-            </div>
-            <div className="flex gap-3">
-              <button onClick={() => { setShowFirebaseSetup(false); }} className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-black text-sm transition-all">キャンセル</button>
-              <button onClick={() => {
-                const trimmed = firebaseConfigJson.trim();
-                let valid = false;
-                if (trimmed) { try { const parsed = JSON.parse(trimmed); valid = !!parsed.apiKey; } catch {} }
-                if (valid) {
-                  localStorage.setItem('firebase_config_json', trimmed);
-                  if (geminiApiKey.trim()) localStorage.setItem('gemini_api_key', geminiApiKey.trim());
-                  setShowFirebaseSetup(false);
-                  setPhase('multi_menu');
-                } else {
-                  alert('有効なFirebase ConfigのJSONを入力してください（apiKeyが必須）');
-                }
-              }} className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-black text-sm transition-all">保存して続ける</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 
@@ -1205,10 +1126,39 @@ const App = () => {
     <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6">
       <div className="w-full max-w-md bg-slate-900 rounded-[2.5rem] border border-slate-800 p-8 shadow-2xl text-center">
         <h2 className="text-2xl font-black italic tracking-tighter text-white mb-2 uppercase">JOIN ROOM</h2>
-        <p className="text-slate-400 text-xs font-bold mb-6">共有されたルームIDを入力してください</p>
-        <input type="text" value={joinRoomIdInput} onChange={e => setJoinRoomIdInput(e.target.value)} placeholder="ROOM ID" className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-4 font-black text-2xl mb-2 outline-none focus:border-indigo-500 text-center uppercase tracking-widest text-indigo-400" maxLength={6}/>
-        {joinError && <div className="text-red-500 text-xs font-bold mb-4">{joinError}</div>}
-        <button onClick={handleJoinRoomStep1} disabled={!joinRoomIdInput.trim()} className={`w-full mt-4 py-4 rounded-xl font-black text-xl transition-all ${joinRoomIdInput.trim() ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-slate-800 text-slate-500'}`}>次へ</button>
+        <p className="text-slate-400 text-xs font-bold mb-6">ルームIDと名前を入力して入室してください</p>
+        <div className="space-y-4 mb-2">
+          <div>
+            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1.5 text-left">ルームID</label>
+            <input
+              type="text"
+              value={joinRoomIdInput}
+              onChange={e => setJoinRoomIdInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { (e.target as HTMLInputElement).blur(); } }}
+              placeholder="ROOM ID"
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-4 font-black text-2xl outline-none focus:border-indigo-500 text-center uppercase tracking-widest text-indigo-400"
+              maxLength={6}
+            />
+          </div>
+          <div>
+            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1.5 text-left">プレイヤー名</label>
+            <input
+              type="text"
+              value={playerNameInput}
+              onChange={e => setPlayerNameInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && joinRoomIdInput.trim() && playerNameInput.trim()) handleJoinRoomFinal(); }}
+              placeholder="名前を入力"
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-4 font-bold text-lg outline-none focus:border-indigo-500 text-center text-white"
+              maxLength={15}
+            />
+          </div>
+        </div>
+        {joinError && <div className="text-red-500 text-xs font-bold mb-4 mt-2">{joinError}</div>}
+        <button
+          onClick={() => handleJoinRoomFinal()}
+          disabled={!joinRoomIdInput.trim() || !playerNameInput.trim()}
+          className={`w-full mt-4 py-4 rounded-xl font-black text-xl transition-all ${joinRoomIdInput.trim() && playerNameInput.trim() ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-slate-800 text-slate-500'}`}
+        >入室する</button>
         <button onClick={() => setPhase('multi_menu')} className="mt-6 text-slate-500 font-bold hover:text-white transition-colors">キャンセル</button>
       </div>
     </div>
@@ -1219,8 +1169,20 @@ const App = () => {
       <div className="w-full max-w-md bg-slate-900 rounded-[2.5rem] border border-slate-800 p-8 shadow-2xl text-center">
         <h2 className="text-2xl font-black italic tracking-tighter text-white mb-2 uppercase">YOUR NAME</h2>
         <p className="text-slate-400 text-xs font-bold mb-6">ゲーム内で表示される名前を入力してください</p>
-        <input type="text" value={playerNameInput} onChange={e => setPlayerNameInput(e.target.value)} placeholder="Player Name" className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-4 font-bold text-lg mb-6 outline-none focus:border-indigo-500 text-center text-white" maxLength={15}/>
-        <button onClick={handleJoinRoomFinal} disabled={!playerNameInput.trim()} className={`w-full py-4 rounded-xl font-black text-xl transition-all ${playerNameInput.trim() ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-slate-800 text-slate-500'}`}>入室する</button>
+        <input
+          type="text"
+          value={playerNameInput}
+          onChange={e => setPlayerNameInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && playerNameInput.trim()) handleJoinRoomFinal(currentRoomId ?? undefined, playerNameInput); }}
+          placeholder="Player Name"
+          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-4 font-bold text-lg mb-6 outline-none focus:border-indigo-500 text-center text-white"
+          maxLength={15}
+        />
+        <button
+          onClick={() => handleJoinRoomFinal(currentRoomId ?? undefined, playerNameInput)}
+          disabled={!playerNameInput.trim()}
+          className={`w-full py-4 rounded-xl font-black text-xl transition-all ${playerNameInput.trim() ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-slate-800 text-slate-500'}`}
+        >入室する</button>
       </div>
     </div>
   );
