@@ -4,7 +4,7 @@ import {
   Sparkles, Zap, Copy, Check, Clock, Settings2, Plus, Trash2,
   Percent, Activity, ShieldAlert,
   UserPlus, Hand, ToggleLeft, ToggleRight, Type,
-  Edit3, GripVertical, Languages, Scale
+  Edit3, GripVertical, Scale
 } from 'lucide-react';
 
 import { initializeApp, getApps } from 'firebase/app';
@@ -220,7 +220,6 @@ const convertNumber = (num: number | string, format: string): string | number =>
 
 const App = () => {
   const [user, setUser] = useState<any>(null);
-  const geminiApiKey = ''; // APIキーUI廃止: 翻訳機能は維持するが設定UIなし
   const [phase, setPhase] = useState('home');
   const [isMultiplayer, setIsMultiplayer] = useState(false);
   const [currentRoomId, setCurrentRoomId] = useState<string | null>(null);
@@ -249,16 +248,14 @@ const App = () => {
   const [isSpecialEventEnabled, setIsSpecialEventEnabled] = useState(true);
   const [specialEventProb, setSpecialEventProb] = useState(25);
   const [enabledSpecialEvents, setEnabledSpecialEvents] = useState([
-    'reverseMode','multiMode','numberFormat','nameTranslation','feint',
+    'reverseMode','multiMode','numberFormat','feint',
     'diceMode','reverseHealDamage','instantDeath','trueRandom'
   ]);
   const [isHpBalanceEnabled, setIsHpBalanceEnabled] = useState(true);
 
-  // numberFormat / nameLanguage は spinRoulette 内でローカル変数として使うため
+  // numberFormat は spinRoulette 内でローカル変数として使うため
   // state は「表示バッジ用」のみ
   const [activeNumberFormat, setActiveNumberFormat] = useState('default');
-  const [activeNameLanguage, setActiveNameLanguage] = useState('default');
-  const [translatedMap, setTranslatedMap] = useState<Record<string, string>>({});
 
   const ALL_NUMBER_FORMATS = [
     { id: 'roman',          label: 'ローマ数字' },
@@ -298,18 +295,11 @@ const App = () => {
     { id: 'georgian',       label: 'ジョージア数字' },
   ];
 
-  const ALL_LANGUAGES = [
-    "アラビア語","イタリア語","インドネシア語","ウクライナ語","オランダ語",
-    "スペイン語(スペイン)","タイ語","ドイツ語","トルコ語","ヒンディー語",
-    "フランス語","ベトナム語","ポーランド語","ポルトガル語(ブラジル)","ロシア語",
-    "英語(アメリカ)","英語(イギリス)","韓国語","中国語(国語、簡体字)","中国語(普通話、簡体字)"
-  ];
 
   // diceConfig: min=ダイス面数下限, max=ダイス面数上限, diceCount=個数
   // diceConfig: minCount〜maxCount個のダイスをランダム個振る、各1〜diceMax面
   const [diceConfig, setDiceConfig] = useState({ minCount: 2, maxCount: 2, faceMin: 1, faceMax: 100 });
   const [enabledFormats, setEnabledFormats] = useState(ALL_NUMBER_FORMATS.map(f => f.id));
-  const [enabledLangs, setEnabledLangs] = useState(ALL_LANGUAGES);
 
   const [manualPlayers, setManualPlayers] = useState<ManualPlayer[]>([]);
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
@@ -335,20 +325,23 @@ const App = () => {
   // ===== Firebase Auth =====
   useEffect(() => {
     const initAuth = async () => {
-      if (!firebaseConfig?.apiKey || !auth) return;
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
-      } catch (err) { console.error("Firebase auth failed:", err); }
+      if (auth && firebaseConfig?.apiKey) {
+        try {
+          if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+            await signInWithCustomToken(auth, __initial_auth_token);
+          } else {
+            await signInAnonymously(auth);
+          }
+        } catch (err) { console.error("Firebase auth failed:", err); }
+        const unsub = onAuthStateChanged(auth, setUser);
+        return () => unsub();
+      } else {
+        // Firebase未設定時: ランダムなUIDで仮ユーザーを生成
+        const fallbackUid = 'local-' + Math.random().toString(36).substring(2, 10);
+        setUser({ uid: fallbackUid });
+      }
     };
     initAuth();
-    if (auth) {
-      const unsub = onAuthStateChanged(auth, setUser);
-      return () => unsub();
-    }
   }, []);
 
   // ===== Firestore リアルタイム同期 =====
@@ -412,7 +405,7 @@ const App = () => {
     if (s.diceConfig) {
       if ('minCount' in s.diceConfig) { setDiceConfig(s.diceConfig); }
       else { setDiceConfig({ minCount: s.diceConfig.diceCount||2, maxCount: s.diceConfig.diceCount||2, faceMin: s.diceConfig.min||1, faceMax: s.diceConfig.max||100 }); }
-    } setEnabledFormats(s.enabledFormats); setEnabledLangs(s.enabledLangs);
+    } setEnabledFormats(s.enabledFormats);
     setConfig(s.config); setReviveEvents(s.reviveEvents);
   };
 
@@ -433,37 +426,6 @@ const App = () => {
       }));
     }
   }, [playerListText, teamCount, mode, isMultiplayer]);
-
-  // ===== 翻訳（APIキーなければ元の名前を返す） =====
-  const generateTranslatedName = async (name: string, targetLang: string): Promise<string> => {
-    if (targetLang === 'default' || !isSpecialEventEnabled) return name;
-    // キャッシュ確認
-    const cacheKey = `${name}__${targetLang}`;
-    if (translatedMap[cacheKey]) return translatedMap[cacheKey];
-    try {
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiApiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: `以下のプレイヤー名を「${targetLang}」に翻訳または音訳してください。余計な説明は省き、名前のみを出力してください。\n名前: ${name}` }] }]
-          })
-        }
-      );
-      if (!res.ok) return name;
-      const data = await res.json();
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || name;
-      setTranslatedMap(prev => ({ ...prev, [cacheKey]: text }));
-      return text;
-    } catch { return name; }
-  };
-
-  // ===== 全プレイヤー名を事前翻訳（スピン前に呼ぶ） =====
-  const prefetchTranslations = async (targetLang: string, targetPlayers: Player[]) => {
-    if (targetLang === 'default') return;
-    await Promise.all(targetPlayers.map(p => generateTranslatedName(p.name, targetLang)));
-  };
 
   // ===== 数量生成 =====
   const generateAmount = (): number => {
@@ -584,9 +546,8 @@ const App = () => {
     // ===== 特別イベント判定（スピン開始時にローカルで確定） =====
     let isReverse = false, isMulti = false, isFeint = false;
     let isInstantDeath = false, isReverseHealDamage = false, isTrueRandom = false;
-    let isDice = false, isNumberFmt = false, isNameTrans = false;
+    let isDice = false, isNumberFmt = false;
     let localNumberFmt = 'default';
-    let localNameLang = 'default';
 
     const isSpecialActive = isSpecialEventEnabled
       && Math.random() < (specialEventProb / 100)
@@ -603,7 +564,6 @@ const App = () => {
       if (enabledSpecialEvents.includes('instantDeath'))      logicPool.push('instantDeath');
       if (enabledSpecialEvents.includes('trueRandom'))        logicPool.push('trueRandom');
       if (enabledSpecialEvents.includes('numberFormat') && enabledFormats.length > 0) logicPool.push('numberFormat');
-      if (enabledSpecialEvents.includes('nameTranslation') && enabledLangs.length > 0) logicPool.push('nameTranslation');
 
       if (logicPool.length > 0) {
         const choice = logicPool[Math.floor(Math.random() * logicPool.length)];
@@ -618,21 +578,11 @@ const App = () => {
           isNumberFmt = true;
           localNumberFmt = enabledFormats[Math.floor(Math.random() * enabledFormats.length)];
         }
-        else if (choice === 'nameTranslation') {
-          isNameTrans = true;
-          localNameLang = enabledLangs[Math.floor(Math.random() * enabledLangs.length)];
-        }
       }
     }
 
     // 表示バッジ用stateを更新
     setActiveNumberFormat(localNumberFmt);
-    setActiveNameLanguage(localNameLang);
-
-    // 翻訳を事前キャッシュ（名前翻訳イベント時のみ）
-    if (isNameTrans && localNameLang !== 'default') {
-      await prefetchTranslations(localNameLang, alivePlayers);
-    }
 
     const weightedPlayers = getPlayerWeights(alivePlayers);
     if (isTrueRandom) weightedPlayers.forEach(p => (p as any).weight = 1);
@@ -646,9 +596,7 @@ const App = () => {
 
     const spinInterval = setInterval(() => {
       const randomAlive = selectWeightedPlayer(weightedPlayers);
-      const nameDisp = isNameTrans && localNameLang !== 'default'
-        ? (translatedMap[`${randomAlive.name}__${localNameLang}`] || randomAlive.name)
-        : randomAlive.name;
+      const nameDisp = randomAlive.name;
 
       if (isManualTurn && !isReviveTurn) {
         setDisplayResult({ player: '対象を選択してください', amount: String(convertNumber(generateAmount(), localNumberFmt)) });
@@ -681,7 +629,7 @@ const App = () => {
             isReverse, isMulti, weightedPlayers,
             isFeint, isInstantDeath, isReverseHealDamage,
             isDice, diceResult,
-            localNumberFmt, localNameLang, isNameTrans
+            localNumberFmt
           );
         }
       }
@@ -707,9 +655,7 @@ const App = () => {
     isReverseHealDamage: boolean,
     isDice: boolean,
     diceResult: { rolls: number[]; total: number; faceMax: number } | null,
-    fmt: string,
-    nameLang: string,
-    isNameTrans: boolean
+    fmt: string
   ) => {
     let chosenPlayer = selectWeightedPlayer(weightedPlayers);
     let reviveTarget: Player | undefined;
@@ -727,10 +673,7 @@ const App = () => {
       await new Promise(r => setTimeout(r, 1200));
     }
 
-    // 表示名（翻訳キャッシュから取得）
-    const displayPlayerName = isNameTrans && nameLang !== 'default'
-      ? (translatedMap[`${chosenPlayer.name}__${nameLang}`] || chosenPlayer.name)
-      : chosenPlayer.name;
+    const displayPlayerName = chosenPlayer.name;
 
     if (effectType === 'revive') {
       if (deadPlayers.length === 0) {
@@ -799,8 +742,7 @@ const App = () => {
         targetIds = [];
         for (const target of selected) {
           targetIds.push(target.id);
-          const tName = isNameTrans && nameLang !== 'default'
-            ? (translatedMap[`${target.name}__${nameLang}`] || target.name) : target.name;
+          const tName = target.name;
           await updateDisplayResultMulti({ player: `${tName}に${amountForDisplay}${effectType==='heal'?'回復':'ダメージ'}`, amount: amountForDisplay });
           await new Promise(r => setTimeout(r, 800));
         }
@@ -910,7 +852,7 @@ const App = () => {
     setPhase('home'); setIsMultiplayer(false); setCurrentRoomId(null); setRoomHostId(null);
     setPlayers([]); setEliminated([]); setLogs([]); setTurn(1);
     setDisplayResult({ player: '？？？', amount: '？' }); setLastResult(null);
-    setActiveNumberFormat('default'); setActiveNameLanguage('default');
+    setActiveNumberFormat('default');
   };
 
   // ===== 設定関連 =====
@@ -966,14 +908,15 @@ const App = () => {
 
   // ===== Multiplayer ルーム操作 =====
   const handleCreateRoom = async () => {
-    if (!user || !db) { alert('Firebase接続に失敗しました。ページを再読み込みしてください。'); return; }
+    if (!db) { alert('Firebase\u304c\u8a2d\u5b9a\u3055\u308c\u3066\u3044\u307e\u305b\u3093\u3002\u30de\u30eb\u30c1\u30d7\u30ec\u30a4\u306b\u306fFirebase\u8a2d\u5b9a\u304c\u5fc5\u8981\u3067\u3059\u3002'); return; }
+    if (!user) { alert('\u8a8d\u8a3c\u4e2d\u3067\u3059\u3002\u3057\u3070\u3089\u304f\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002'); return; }
     try {
       const roomId = Math.random().toString(36).substring(2, 7).toUpperCase();
       await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomId), {
         hostId: user.uid, status: 'joining', roomId,
         settings: { title, mode, teamCount, teamNames, initialHP, spinDuration, healInterval,
           isHpBalanceEnabled, isSpecialEventEnabled, specialEventProb, enabledSpecialEvents,
-          diceConfig, enabledFormats, enabledLangs, config, reviveEvents },
+          diceConfig, enabledFormats, config, reviveEvents },
         players: [],
         gameState: { turn: 1, logs: [], eliminated: [], isSpinning: false,
           displayResult: { player: '？？？', amount: '？' }, lastResult: null }
@@ -984,7 +927,8 @@ const App = () => {
   const handleJoinRoomFinal = async (overrideRoomId?: string, overrideName?: string) => {
     const roomIdToUse = (overrideRoomId ?? joinRoomIdInput).trim().toUpperCase();
     const nameToUse = (overrideName ?? playerNameInput).trim();
-    if (!roomIdToUse || !nameToUse || !user || !db) return;
+    if (!roomIdToUse || !nameToUse || !user) return;
+    if (!db) { setJoinError('Firebase\u304c\u8a2d\u5b9a\u3055\u308c\u3066\u3044\u307e\u305b\u3093\u3002\u30de\u30eb\u30c1\u30d7\u30ec\u30a4\u306b\u306fFirebase\u8a2d\u5b9a\u304c\u5fc5\u8981\u3067\u3059\u3002'); return; }
     try {
       const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomIdToUse);
       const snap = await getDoc(roomRef);
@@ -1019,7 +963,7 @@ const App = () => {
       teamIndex: p.teamIndex
     })));
     setPhase('playing'); setTurn(1); setEliminated([]); setLogs([]); setLastResult(null);
-    setActiveNumberFormat('default'); setActiveNameLanguage('default');
+    setActiveNumberFormat('default');
     setIsManualSelectionPhase(false); setSelectedPlayerIds([]);
   };
 
@@ -1320,13 +1264,12 @@ const App = () => {
                           { id: 'feint',             label: 'ルーレットフェイント',           icon: <Zap size={10}/> },
                           { id: 'diceMode',          label: `ダイスルーレット (${diceConfig.minCount}${diceConfig.minCount!==diceConfig.maxCount?'~'+diceConfig.maxCount:''}d${diceConfig.faceMin>1?diceConfig.faceMin+'~':''}${diceConfig.faceMax})`, icon: <Percent size={10}/> },
                           { id: 'numberFormat',      label: '特殊数値形式',                 icon: <Type size={10}/> },
-                          { id: 'nameTranslation',   label: '名前の多言語化',               icon: <Languages size={10}/> },
                           { id: 'reverseHealDamage', label: '回復・ダメージ逆転',           icon: <RotateCcw size={10}/> },
                           { id: 'instantDeath',      label: '脱落イベント (即死)',           icon: <Skull size={10}/> },
                           { id: 'trueRandom',        label: '完全ランダム (HPバランス無視)', icon: <Activity size={10}/> },
                         ].map(ev => (
                           <div key={ev.id} className="flex flex-col">
-                            <button onClick={() => toggleSpecialEvent(ev.id)} className={`p-2.5 rounded-xl border flex items-center justify-between transition-all ${enabledSpecialEvents.includes(ev.id) ? 'bg-purple-600/20 border-purple-500/50 text-purple-100' : 'bg-slate-900 border-slate-800 text-slate-600'} ${enabledSpecialEvents.includes(ev.id) && ['diceMode','numberFormat','nameTranslation'].includes(ev.id) ? 'rounded-b-none border-b-0' : ''}`}>
+                            <button onClick={() => toggleSpecialEvent(ev.id)} className={`p-2.5 rounded-xl border flex items-center justify-between transition-all ${enabledSpecialEvents.includes(ev.id) ? 'bg-purple-600/20 border-purple-500/50 text-purple-100' : 'bg-slate-900 border-slate-800 text-slate-600'} ${enabledSpecialEvents.includes(ev.id) && ['diceMode','numberFormat'].includes(ev.id) ? 'rounded-b-none border-b-0' : ''}`}>
                               <span className="text-[9px] font-bold flex items-center gap-2">{ev.icon} {ev.label}</span>
                               <div className={`w-2 h-2 rounded-full ${enabledSpecialEvents.includes(ev.id) ? 'bg-purple-500 shadow-[0_0_8px_rgba(168,85,247,0.6)]' : 'bg-slate-700'}`}/>
                             </button>
@@ -1370,16 +1313,6 @@ const App = () => {
                                   <label key={fmt.id} className="flex items-center gap-1.5 text-[9px] text-slate-300 cursor-pointer">
                                     <input type="checkbox" checked={enabledFormats.includes(fmt.id)} onChange={() => setEnabledFormats(prev => prev.includes(fmt.id) ? prev.filter(id => id !== fmt.id) : [...prev, fmt.id])} className="accent-purple-500 w-3 h-3 shrink-0"/>
                                     <span className="truncate">{fmt.label}</span>
-                                  </label>
-                                ))}
-                              </div>
-                            )}
-                            {enabledSpecialEvents.includes(ev.id) && ev.id === 'nameTranslation' && (
-                              <div className="pl-3 pr-2 py-2 bg-slate-900/50 rounded-b-xl border border-purple-500/50 border-t-0 grid grid-cols-2 gap-y-1.5 gap-x-1 max-h-40 overflow-y-auto custom-scrollbar">
-                                {ALL_LANGUAGES.map(lang => (
-                                  <label key={lang} className="flex items-center gap-1.5 text-[9px] text-slate-300 cursor-pointer">
-                                    <input type="checkbox" checked={enabledLangs.includes(lang)} onChange={() => setEnabledLangs(prev => prev.includes(lang) ? prev.filter(l => l !== lang) : [...prev, lang])} className="accent-purple-500 w-3 h-3 shrink-0"/>
-                                    <span className="truncate">{lang}</span>
                                   </label>
                                 ))}
                               </div>
@@ -1609,7 +1542,6 @@ const App = () => {
             {isMultiplayer && <div className="bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2"><Activity size={14}/> ONLINE</div>}
             {isHpBalanceEnabled && <div className="bg-emerald-600/20 text-emerald-500 border border-emerald-500/30 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2"><Scale size={14}/> BALANCED</div>}
             {activeNumberFormat !== 'default' && <div className="bg-amber-600/20 text-amber-500 border border-amber-500/30 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest animate-pulse flex items-center gap-2"><Type size={14}/> {ALL_NUMBER_FORMATS.find(f=>f.id===activeNumberFormat)?.label || activeNumberFormat}</div>}
-            {activeNameLanguage !== 'default' && <div className="bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest animate-pulse flex items-center gap-2"><Languages size={14}/> {activeNameLanguage}</div>}
           </div>
 
           <div className="text-center w-full px-6 relative z-10 flex flex-col items-center">
