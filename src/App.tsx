@@ -347,7 +347,7 @@ const App = () => {
   // ===== Firestore リアルタイム同期 =====
   useEffect(() => {
     if (!user || !currentRoomId || !db) return;
-    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId);
+    const roomRef = doc(db!, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId);
     const unsub = onSnapshot(roomRef, (snap) => {
       if (!snap.exists()) return;
       const data = snap.data();
@@ -510,7 +510,7 @@ const App = () => {
     setDisplayResult(res);
     if (isMultiplayer && user?.uid === roomHostId && db && currentRoomId) {
       try {
-        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId), { 'gameState.displayResult': res });
+        await updateDoc(doc(db!, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId), { 'gameState.displayResult': res });
       } catch {}
     }
   };
@@ -531,14 +531,14 @@ const App = () => {
 
     if (isGameOver && !isReviveTurn) {
       if (isMultiplayer && db && currentRoomId) {
-        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId), { status: 'result' }).catch(() => {});
+        await updateDoc(doc(db!, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId), { status: 'result' }).catch(() => {});
       } else { setPhase('result'); }
       return;
     }
 
     setIsSpinning(true);
     if (isMultiplayer && db && currentRoomId) {
-      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId), { 'gameState.isSpinning': true }).catch(() => {});
+      await updateDoc(doc(db!, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId), { 'gameState.isSpinning': true }).catch(() => {});
     }
 
     let effectType = isReviveTurn ? 'revive' : (isHealTurn ? 'heal' : 'damage');
@@ -773,7 +773,7 @@ const App = () => {
 
     if (isMultiplayer && db && currentRoomId) {
       try {
-        const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId);
+        const roomRef = doc(db!, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId);
         const afterAlive = updatedPlayers.filter(p => p.status === 'alive');
         const isFinished = mode === 'team' ? new Set(afterAlive.map(p => p.team)).size <= 1 : afterAlive.length <= 1;
         await updateDoc(roomRef, {
@@ -895,7 +895,7 @@ const App = () => {
   const autoAssignTeams = () => {
     if (isMultiplayer && user?.uid === roomHostId && db && currentRoomId) {
       const updated = [...players].map((p, i) => ({ ...p, teamIndex: i % teamCount, team: teamNames[i % teamCount] }));
-      updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId), { players: updated }).catch(() => {});
+      updateDoc(doc(db!, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId), { players: updated }).catch(() => {});
     } else if (!isMultiplayer) {
       setManualPlayers(prev => prev.map((p, i) => ({ ...p, teamIndex: i % teamCount })));
     }
@@ -908,29 +908,34 @@ const App = () => {
 
   // ===== Multiplayer ルーム操作 =====
   const handleCreateRoom = async () => {
-    if (!db) { alert('Firebase\u304c\u8a2d\u5b9a\u3055\u308c\u3066\u3044\u307e\u305b\u3093\u3002\u30de\u30eb\u30c1\u30d7\u30ec\u30a4\u306b\u306fFirebase\u8a2d\u5b9a\u304c\u5fc5\u8981\u3067\u3059\u3002'); return; }
     if (!user) { alert('\u8a8d\u8a3c\u4e2d\u3067\u3059\u3002\u3057\u3070\u3089\u304f\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002'); return; }
-    try {
-      const roomId = Math.random().toString(36).substring(2, 7).toUpperCase();
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomId), {
-        hostId: user.uid, status: 'joining', roomId,
-        settings: { title, mode, teamCount, teamNames, initialHP, spinDuration, healInterval,
-          isHpBalanceEnabled, isSpecialEventEnabled, specialEventProb, enabledSpecialEvents,
-          diceConfig, enabledFormats, config, reviveEvents },
-        players: [],
-        gameState: { turn: 1, logs: [], eliminated: [], isSpinning: false,
-          displayResult: { player: '？？？', amount: '？' }, lastResult: null }
-      });
-      setCurrentRoomId(roomId); setRoomHostId(user.uid); setPhase('multi_name');
-    } catch (e) { console.error('Room creation failed', e); }
+    const roomId = Math.random().toString(36).substring(2, 7).toUpperCase();
+    if (db) {
+      try {
+        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomId), {
+          hostId: user.uid, status: 'joining', roomId,
+          settings: { title, mode, teamCount, teamNames, initialHP, spinDuration, healInterval,
+            isHpBalanceEnabled, isSpecialEventEnabled, specialEventProb, enabledSpecialEvents,
+            diceConfig, enabledFormats, config, reviveEvents },
+          players: [],
+          gameState: { turn: 1, logs: [], eliminated: [], isSpinning: false,
+            displayResult: { player: '\uff1f\uff1f\uff1f', amount: '\uff1f' }, lastResult: null }
+        });
+      } catch (e) {
+        console.error('Room creation failed', e);
+        alert('\u30eb\u30fc\u30e0\u306e\u4f5c\u6210\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002');
+        return;
+      }
+    }
+    setCurrentRoomId(roomId); setRoomHostId(user.uid); setPhase('multi_name');
   };
   const handleJoinRoomFinal = async (overrideRoomId?: string, overrideName?: string) => {
     const roomIdToUse = (overrideRoomId ?? joinRoomIdInput).trim().toUpperCase();
     const nameToUse = (overrideName ?? playerNameInput).trim();
     if (!roomIdToUse || !nameToUse || !user) return;
-    if (!db) { setJoinError('Firebase\u304c\u8a2d\u5b9a\u3055\u308c\u3066\u3044\u307e\u305b\u3093\u3002\u30de\u30eb\u30c1\u30d7\u30ec\u30a4\u306b\u306fFirebase\u8a2d\u5b9a\u304c\u5fc5\u8981\u3067\u3059\u3002'); return; }
+    if (!db) { setJoinError('\u30eb\u30fc\u30e0\u60c5\u5831\u306e\u53d6\u5f97\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002'); return; }
     try {
-      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomIdToUse);
+      const roomRef = doc(db!, 'artifacts', appId, 'public', 'data', 'rooms', roomIdToUse);
       const snap = await getDoc(roomRef);
       if (!snap.exists() || snap.data().status !== 'joining') {
         setJoinError('無効なルームIDか、すでに開始されています。');
@@ -971,7 +976,7 @@ const App = () => {
     if (!db || !currentRoomId) return;
     const colors = ['text-red-400','text-blue-400','text-emerald-400','text-amber-400','text-purple-400','text-cyan-400'];
     try {
-      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId), {
+      await updateDoc(doc(db!, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId), {
         status: 'playing',
         players: players.map(p => ({ ...p, teamColor: mode === 'team' ? colors[(p.teamIndex||0) % colors.length] : null })),
         'gameState.turn': 1, 'gameState.logs': [], 'gameState.eliminated': [], 'gameState.lastResult': null
@@ -987,7 +992,7 @@ const App = () => {
     e.preventDefault();
     if (draggedPlayer && isMultiplayer && user?.uid === roomHostId && db && currentRoomId) {
       try {
-        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId), {
+        await updateDoc(doc(db!, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId), {
           players: players.map(p => (p as Player).id === (draggedPlayer as Player).id ? { ...p, teamIndex: ti, team: teamNames[ti] } : p)
         });
       } catch {}
@@ -1005,7 +1010,7 @@ const App = () => {
   const onTouchEndLobby = async () => {
     if (draggedPlayer && touchTargetTeam !== null && isMultiplayer && user?.uid === roomHostId && db && currentRoomId) {
       try {
-        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId), {
+        await updateDoc(doc(db!, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId), {
           players: players.map(p => (p as Player).id === (draggedPlayer as Player).id ? { ...p, teamIndex: touchTargetTeam, team: teamNames[touchTargetTeam] } : p)
         });
       } catch {}
