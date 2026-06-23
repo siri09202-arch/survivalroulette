@@ -322,6 +322,34 @@ const App = () => {
   const [draggedPlayer, setDraggedPlayer] = useState<Player | ManualPlayer | null>(null);
   const [touchTargetTeam, setTouchTargetTeam] = useState<number | null>(null);
 
+  // ===== ローカル文字列state（数値入力用：onBlurで確定） =====
+  const [localTeamCount, setLocalTeamCount] = useState('2');
+  const [localInitialHP, setLocalInitialHP] = useState('1000');
+  const [localSpinDuration, setLocalSpinDuration] = useState('1.5');
+  const [localHealInterval, setLocalHealInterval] = useState('10');
+  const [localSpecialEventProb, setLocalSpecialEventProb] = useState('25');
+  const [localRangeMin, setLocalRangeMin] = useState('1');
+  const [localRangeMax, setLocalRangeMax] = useState('200');
+  const [localRangeProb, setLocalRangeProb] = useState('70');
+  const [localDiceMinCount, setLocalDiceMinCount] = useState('1');
+  const [localDiceMaxCount, setLocalDiceMaxCount] = useState('1');
+  const [localDiceFaceMin, setLocalDiceFaceMin] = useState('1');
+  const [localDiceFaceMax, setLocalDiceFaceMax] = useState('6');
+
+  // ===== 数値state→ローカルstring state同期（syncSettingsFromRoom対応） =====
+  useEffect(() => { setLocalTeamCount(String(teamCount)); }, [teamCount]);
+  useEffect(() => { setLocalInitialHP(String(initialHP)); }, [initialHP]);
+  useEffect(() => { setLocalSpinDuration(String(spinDuration)); }, [spinDuration]);
+  useEffect(() => { setLocalHealInterval(String(healInterval)); }, [healInterval]);
+  useEffect(() => { setLocalSpecialEventProb(String(specialEventProb)); }, [specialEventProb]);
+  useEffect(() => { setLocalRangeMin(String(config.rangeMin)); }, [config.rangeMin]);
+  useEffect(() => { setLocalRangeMax(String(config.rangeMax)); }, [config.rangeMax]);
+  useEffect(() => { setLocalRangeProb(String(config.rangeProb)); }, [config.rangeProb]);
+  useEffect(() => { setLocalDiceMinCount(String(diceConfig.minCount)); }, [diceConfig.minCount]);
+  useEffect(() => { setLocalDiceMaxCount(String(diceConfig.maxCount)); }, [diceConfig.maxCount]);
+  useEffect(() => { setLocalDiceFaceMin(String(diceConfig.faceMin)); }, [diceConfig.faceMin]);
+  useEffect(() => { setLocalDiceFaceMax(String(diceConfig.faceMax)); }, [diceConfig.faceMax]);
+
   // ===== Firebase Auth =====
   useEffect(() => {
     const initAuth = async () => {
@@ -933,7 +961,22 @@ const App = () => {
     const roomIdToUse = (overrideRoomId ?? joinRoomIdInput).trim().toUpperCase();
     const nameToUse = (overrideName ?? playerNameInput).trim();
     if (!roomIdToUse || !nameToUse || !user) return;
-    if (!db) { setJoinError('\u30eb\u30fc\u30e0\u60c5\u5831\u306e\u53d6\u5f97\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002'); return; }
+    // db未設定かつホスト（overrideRoomId指定）の場合はローカルで登録してlobbyへ
+    if (!db) {
+      if (overrideRoomId) {
+        const newPlayer = {
+          id: `p-${Date.now()}-${user.uid}`, uid: user.uid,
+          name: nameToUse, hp: initialHP,
+          status: 'alive' as const, teamIndex: 0, team: null
+        };
+        setPlayers([newPlayer]);
+        setJoinError('');
+        setPhase('multi_lobby');
+      } else {
+        setJoinError('\u30eb\u30fc\u30e0\u60c5\u5831\u306e\u53d6\u5f97\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002');
+      }
+      return;
+    }
     try {
       const roomRef = doc(db!, 'artifacts', appId, 'public', 'data', 'rooms', roomIdToUse);
       const snap = await getDoc(roomRef);
@@ -1227,7 +1270,7 @@ const App = () => {
                   <div className="p-3 bg-slate-950 rounded-2xl border border-slate-800 space-y-3">
                     <div>
                       <label className="text-[8px] font-black text-slate-500 tracking-widest block mb-1 uppercase">チーム数</label>
-                      <input type="number" min="2" max="6" value={teamCount} onChange={e => setTeamCount(parseInt(e.target.value)||2)} onKeyDown={e => e.key==='Enter' && setTeamCount(Math.max(2,Math.min(6,parseInt((e.target as HTMLInputElement).value)||2)))} className="bg-transparent text-xl font-black w-full outline-none text-indigo-400 tabular-nums"/>
+                      <input type="number" min="2" max="6" value={localTeamCount} onChange={e => setLocalTeamCount(e.target.value)} onBlur={e => { const v=Math.max(2,Math.min(6,parseInt(e.target.value)||2)); setTeamCount(v); setLocalTeamCount(String(v)); }} onKeyDown={e => { if(e.key==='Enter'){ (e.target as HTMLInputElement).blur(); } }} className="bg-transparent text-xl font-black w-full outline-none text-indigo-400 tabular-nums"/>
                     </div>
                     <div className="space-y-2 pt-2 border-t border-slate-800">
                       <label className="text-[8px] font-black text-slate-500 tracking-widest block mb-1 uppercase flex items-center gap-1"><Edit3 size={8}/> チーム名設定</label>
@@ -1240,10 +1283,10 @@ const App = () => {
                   </div>
                 )}
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="p-3 bg-slate-950 rounded-2xl border border-slate-800"><label className="text-[8px] font-black text-slate-500 block mb-1 uppercase">初期HP</label><input type="number" value={initialHP} onChange={e => setInitialHP(Math.max(1, parseInt(e.target.value)||1))} onKeyDown={e => e.key==='Enter' && setInitialHP(Math.max(1, parseInt((e.target as HTMLInputElement).value)||1))} className="bg-transparent text-lg font-black w-full outline-none text-indigo-400"/></div>
-                  <div className="p-3 bg-slate-950 rounded-2xl border border-slate-800"><label className="text-[8px] font-black text-slate-500 block mb-1 uppercase">速度 (秒)</label><input type="number" step="0.1" value={spinDuration} onChange={e => setSpinDuration(Math.max(0.1, parseFloat(e.target.value)||0.1))} onKeyDown={e => e.key==='Enter' && setSpinDuration(Math.max(0.1, parseFloat((e.target as HTMLInputElement).value)||0.1))} className="bg-transparent text-lg font-black w-full outline-none text-amber-500"/></div>
+                  <div className="p-3 bg-slate-950 rounded-2xl border border-slate-800"><label className="text-[8px] font-black text-slate-500 block mb-1 uppercase">初期HP</label><input type="number" value={localInitialHP} onChange={e => setLocalInitialHP(e.target.value)} onBlur={e => { const v=Math.max(1,parseInt(e.target.value)||1); setInitialHP(v); setLocalInitialHP(String(v)); }} onKeyDown={e => { if(e.key==='Enter'){ (e.target as HTMLInputElement).blur(); } }} className="bg-transparent text-lg font-black w-full outline-none text-indigo-400"/></div>
+                  <div className="p-3 bg-slate-950 rounded-2xl border border-slate-800"><label className="text-[8px] font-black text-slate-500 block mb-1 uppercase">速度 (秒)</label><input type="number" step="0.1" value={localSpinDuration} onChange={e => setLocalSpinDuration(e.target.value)} onBlur={e => { const v=Math.max(0.1,parseFloat(e.target.value)||0.1); setSpinDuration(v); setLocalSpinDuration(String(v)); }} onKeyDown={e => { if(e.key==='Enter'){ (e.target as HTMLInputElement).blur(); } }} className="bg-transparent text-lg font-black w-full outline-none text-amber-500"/></div>
                 </div>
-                <div className="p-3 bg-slate-950 rounded-2xl border border-slate-800"><label className="text-[8px] font-black text-slate-500 block mb-1 uppercase">回復頻度 (ターン)</label><input type="number" value={healInterval} onChange={e => setHealInterval(Math.max(1, parseInt(e.target.value)||1))} onKeyDown={e => e.key==='Enter' && setHealInterval(Math.max(1, parseInt((e.target as HTMLInputElement).value)||1))} className="bg-transparent text-lg font-black w-full outline-none text-emerald-500"/></div>
+                <div className="p-3 bg-slate-950 rounded-2xl border border-slate-800"><label className="text-[8px] font-black text-slate-500 block mb-1 uppercase">回復頻度 (ターン)</label><input type="number" value={localHealInterval} onChange={e => setLocalHealInterval(e.target.value)} onBlur={e => { const v=Math.max(1,parseInt(e.target.value)||1); setHealInterval(v); setLocalHealInterval(String(v)); }} onKeyDown={e => { if(e.key==='Enter'){ (e.target as HTMLInputElement).blur(); } }} className="bg-transparent text-lg font-black w-full outline-none text-emerald-500"/></div>
                 <div className="space-y-2">
                   <button onClick={() => setIsHpBalanceEnabled(!isHpBalanceEnabled)} className={`w-full p-3 rounded-2xl border flex items-center justify-between transition-all ${isHpBalanceEnabled ? 'bg-emerald-600/10 border-emerald-500 text-white' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
                     <span className="text-[10px] font-black uppercase tracking-widest flex items-center gap-2"><Scale size={14}/> HPバランス調整</span>
@@ -1258,7 +1301,7 @@ const App = () => {
                       <div className="p-3 bg-slate-950/50 rounded-2xl border border-purple-500/30 flex items-center justify-between">
                         <span className="text-[10px] font-black text-slate-400 uppercase">発生確率</span>
                         <div className="flex items-center gap-1 bg-purple-500/10 px-2 py-1 rounded-lg">
-                          <input type="number" min="1" max="100" value={specialEventProb} onChange={e => setSpecialEventProb(Number(e.target.value))} onBlur={handleSpecialEventProbComplete} onKeyDown={handleSpecialEventProbComplete} className="bg-transparent text-[10px] font-black w-8 outline-none text-purple-400 text-right tabular-nums"/>
+                          <input type="number" min="1" max="100" value={localSpecialEventProb} onChange={e => setLocalSpecialEventProb(e.target.value)} onBlur={e => { const v=Math.max(1,Math.min(100,parseInt(e.target.value)||1)); setSpecialEventProb(v); setLocalSpecialEventProb(String(v)); }} onKeyDown={e => { if(e.key==='Enter'){ (e.target as HTMLInputElement).blur(); } }} className="bg-transparent text-[10px] font-black w-8 outline-none text-purple-400 text-right tabular-nums"/>
                           <span className="text-[8px] font-black text-purple-400">%</span>
                         </div>
                       </div>
@@ -1282,31 +1325,31 @@ const App = () => {
                               <div className="pl-4 pr-2 py-2 bg-slate-900/50 rounded-b-xl border border-purple-500/50 border-t-0 space-y-1.5">
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <span className="text-[9px] text-slate-400 w-10 shrink-0">個数:</span>
-                                  <input type="number" min="1" max="20" value={diceConfig.minCount}
-                                    onChange={e => setDiceConfig(p => ({...p, minCount: parseInt(e.target.value)||1}))}
-                                    onBlur={e => setDiceConfig(p => ({...p, minCount: Math.max(1,Math.min(p.maxCount, parseInt(e.target.value)||1))}))}
-                                    onKeyDown={e => e.key==='Enter'&&setDiceConfig(p => ({...p, minCount: Math.max(1,Math.min(p.maxCount, parseInt((e.target as HTMLInputElement).value)||1))}))}
+                                  <input type="number" min="1" max="20" value={localDiceMinCount}
+                                    onChange={e => setLocalDiceMinCount(e.target.value)}
+                                    onBlur={e => { const v=Math.max(1,Math.min(diceConfig.maxCount,parseInt(e.target.value)||1)); setDiceConfig(p=>({...p,minCount:v})); setLocalDiceMinCount(String(v)); }}
+                                    onKeyDown={e => { if(e.key==='Enter'){ (e.target as HTMLInputElement).blur(); } }}
                                     className="w-10 bg-slate-950 border border-slate-800 rounded px-1 text-[10px] text-white text-center"/>
                                   <span className="text-slate-400 text-[9px]">〜</span>
-                                  <input type="number" min="1" max="20" value={diceConfig.maxCount}
-                                    onChange={e => setDiceConfig(p => ({...p, maxCount: parseInt(e.target.value)||1}))}
-                                    onBlur={e => setDiceConfig(p => ({...p, maxCount: Math.max(p.minCount, parseInt(e.target.value)||1)}))}
-                                    onKeyDown={e => e.key==='Enter'&&setDiceConfig(p => ({...p, maxCount: Math.max(p.minCount, parseInt((e.target as HTMLInputElement).value)||1)}))}
+                                  <input type="number" min="1" max="20" value={localDiceMaxCount}
+                                    onChange={e => setLocalDiceMaxCount(e.target.value)}
+                                    onBlur={e => { const v=Math.max(diceConfig.minCount,parseInt(e.target.value)||1); setDiceConfig(p=>({...p,maxCount:v})); setLocalDiceMaxCount(String(v)); }}
+                                    onKeyDown={e => { if(e.key==='Enter'){ (e.target as HTMLInputElement).blur(); } }}
                                     className="w-10 bg-slate-950 border border-slate-800 rounded px-1 text-[10px] text-white text-center"/>
                                   <span className="text-slate-400 text-[9px]">個</span>
                                 </div>
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <span className="text-[9px] text-slate-400 w-10 shrink-0">面数:</span>
-                                  <input type="number" min="1" value={diceConfig.faceMin}
-                                    onChange={e => setDiceConfig(p => ({...p, faceMin: parseInt(e.target.value)||1}))}
-                                    onBlur={e => setDiceConfig(p => ({...p, faceMin: Math.max(1,Math.min(p.faceMax, parseInt(e.target.value)||1))}))}
-                                    onKeyDown={e => e.key==='Enter'&&setDiceConfig(p => ({...p, faceMin: Math.max(1,Math.min(p.faceMax, parseInt((e.target as HTMLInputElement).value)||1))}))}
+                                  <input type="number" min="1" value={localDiceFaceMin}
+                                    onChange={e => setLocalDiceFaceMin(e.target.value)}
+                                    onBlur={e => { const v=Math.max(1,Math.min(diceConfig.faceMax,parseInt(e.target.value)||1)); setDiceConfig(p=>({...p,faceMin:v})); setLocalDiceFaceMin(String(v)); }}
+                                    onKeyDown={e => { if(e.key==='Enter'){ (e.target as HTMLInputElement).blur(); } }}
                                     className="w-14 bg-slate-950 border border-slate-800 rounded px-1 text-[10px] text-white text-center"/>
                                   <span className="text-slate-400 text-[9px]">〜</span>
-                                  <input type="number" min="1" value={diceConfig.faceMax}
-                                    onChange={e => setDiceConfig(p => ({...p, faceMax: parseInt(e.target.value)||1}))}
-                                    onBlur={e => setDiceConfig(p => ({...p, faceMax: Math.max(p.faceMin, parseInt(e.target.value)||1)}))}
-                                    onKeyDown={e => e.key==='Enter'&&setDiceConfig(p => ({...p, faceMax: Math.max(p.faceMin, parseInt((e.target as HTMLInputElement).value)||1)}))}
+                                  <input type="number" min="1" value={localDiceFaceMax}
+                                    onChange={e => setLocalDiceFaceMax(e.target.value)}
+                                    onBlur={e => { const v=Math.max(diceConfig.faceMin,parseInt(e.target.value)||1); setDiceConfig(p=>({...p,faceMax:v})); setLocalDiceFaceMax(String(v)); }}
+                                    onKeyDown={e => { if(e.key==='Enter'){ (e.target as HTMLInputElement).blur(); } }}
                                     className="w-14 bg-slate-950 border border-slate-800 rounded px-1 text-[10px] text-white text-center"/>
                                   <span className="text-slate-400 text-[9px]">面</span>
                                 </div>
@@ -1389,21 +1432,21 @@ const App = () => {
                     <div className="flex justify-between items-center">
                       <span className="text-[10px] font-black text-slate-400">ランダム範囲</span>
                       <div className="flex items-center gap-1 bg-indigo-500/10 px-2 py-1 rounded-lg">
-                        <input type="number" value={config.rangeProb} onChange={e => setConfig({...config, rangeProb: Number(e.target.value)})} onBlur={e => handleConfigComplete(e, 'rangeProb', 0)} onKeyDown={e => handleConfigComplete(e, 'rangeProb', 0)} className="bg-transparent text-[10px] font-black w-6 outline-none text-indigo-400 text-right"/>
+                        <input type="number" value={localRangeProb} onChange={e => setLocalRangeProb(e.target.value)} onBlur={e => { const v=Math.max(0,Math.min(100,parseInt(e.target.value)||0)); setConfig(c=>({...c,rangeProb:v})); setLocalRangeProb(String(v)); }} onKeyDown={e => { if(e.key==='Enter'){ (e.target as HTMLInputElement).blur(); } }} className="bg-transparent text-[10px] font-black w-6 outline-none text-indigo-400 text-right"/>
                         <span className="text-[8px] font-black text-indigo-400">%</span>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <input type="number" value={config.rangeMin} onChange={e => setConfig({...config, rangeMin: Number(e.target.value)})} onBlur={e => handleConfigComplete(e, 'rangeMin', 1)} onKeyDown={e => handleConfigComplete(e, 'rangeMin', 1)} className="w-full bg-slate-900 p-2 rounded-xl text-center font-black text-xs border border-slate-800"/>
+                      <input type="number" value={localRangeMin} onChange={e => setLocalRangeMin(e.target.value)} onBlur={e => { const v=Math.max(1,parseInt(e.target.value)||1); setConfig(c=>({...c,rangeMin:v})); setLocalRangeMin(String(v)); }} onKeyDown={e => { if(e.key==='Enter'){ (e.target as HTMLInputElement).blur(); } }} className="w-full bg-slate-900 p-2 rounded-xl text-center font-black text-xs border border-slate-800"/>
                       <span className="text-slate-700">~</span>
-                      <input type="number" value={config.rangeMax} onChange={e => setConfig({...config, rangeMax: Number(e.target.value)})} onBlur={e => handleConfigComplete(e, 'rangeMax', 1)} onKeyDown={e => handleConfigComplete(e, 'rangeMax', 1)} className="w-full bg-slate-900 p-2 rounded-xl text-center font-black text-xs border border-slate-800"/>
+                      <input type="number" value={localRangeMax} onChange={e => setLocalRangeMax(e.target.value)} onBlur={e => { const v=Math.max(1,parseInt(e.target.value)||1); setConfig(c=>({...c,rangeMax:v})); setLocalRangeMax(String(v)); }} onKeyDown={e => { if(e.key==='Enter'){ (e.target as HTMLInputElement).blur(); } }} className="w-full bg-slate-900 p-2 rounded-xl text-center font-black text-xs border border-slate-800"/>
                     </div>
                   </div>
                   {config.fixedItems.map(item => (
                     <div key={item.id} className="p-4 bg-slate-950 rounded-2xl border border-slate-800 flex items-center gap-2">
-                      <input type="number" value={item.value} onChange={e => updateFixedItemValue(item.id, 'value', e.target.value)} onBlur={e => handleFixedItemComplete(e, item.id, 'value', 1)} onKeyDown={e => handleFixedItemComplete(e, item.id, 'value', 1)} className="w-16 bg-slate-900 p-2 rounded-xl text-center font-black text-xs border border-slate-800"/>
+                      <input type="number" value={item.value} onChange={e => updateFixedItemValue(item.id, 'value', e.target.value)} onBlur={e => handleFixedItemComplete(e, item.id, 'value', 1)} onKeyDown={e => { if(e.key==='Enter'){ (e.target as HTMLInputElement).blur(); } }} className="w-16 bg-slate-900 p-2 rounded-xl text-center font-black text-xs border border-slate-800"/>
                       <div className="flex-1 flex items-center gap-1 bg-slate-900 p-2 rounded-xl border border-slate-800">
-                        <input type="number" value={item.prob} onChange={e => updateFixedItemValue(item.id, 'prob', e.target.value)} onBlur={e => handleFixedItemComplete(e, item.id, 'prob', 0)} onKeyDown={e => handleFixedItemComplete(e, item.id, 'prob', 0)} className="w-full bg-transparent text-[10px] font-black text-right outline-none text-indigo-400"/>
+                        <input type="number" value={item.prob} onChange={e => updateFixedItemValue(item.id, 'prob', e.target.value)} onBlur={e => handleFixedItemComplete(e, item.id, 'prob', 0)} onKeyDown={e => { if(e.key==='Enter'){ (e.target as HTMLInputElement).blur(); } }} className="w-full bg-transparent text-[10px] font-black text-right outline-none text-indigo-400"/>
                         <span className="text-[8px] text-slate-500">%</span>
                       </div>
                       <button onClick={() => removeFixedItem(item.id)} className="p-2 text-red-500"><Trash2 size={14}/></button>
@@ -1417,7 +1460,7 @@ const App = () => {
                   </div>
                   {reviveEvents.map(rev => (
                     <div key={rev.id} className="p-3 bg-slate-950 rounded-2xl border border-purple-900/30 flex items-center gap-2">
-                      <input type="number" value={rev.turn} onChange={e => updateReviveEventState(rev.id, 'turn', e.target.value)} className="w-14 bg-slate-900 p-2 rounded-xl text-center font-black text-xs border border-slate-800 text-purple-400"/>
+                      <input type="number" value={rev.turn} onChange={e => updateReviveEventState(rev.id, 'turn', e.target.value)} onBlur={e => updateReviveEventState(rev.id, 'turn', e.target.value)} onKeyDown={e => { if(e.key==='Enter'){ (e.target as HTMLInputElement).blur(); } }} className="w-14 bg-slate-900 p-2 rounded-xl text-center font-black text-xs border border-slate-800 text-purple-400"/>
                       <div className="flex-1 flex gap-1">
                         {(['steal','copy'] as const).map(t => (
                           <button key={t} onClick={() => updateReviveEventState(rev.id, 'type', t)} className={`flex-1 py-1.5 rounded-lg text-[8px] font-bold ${rev.type===t ? 'bg-purple-600 text-white' : 'bg-slate-900 text-slate-600'}`}>{t==='steal' ? '奪う' : 'コピー'}</button>
