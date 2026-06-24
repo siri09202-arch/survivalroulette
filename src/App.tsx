@@ -973,15 +973,19 @@ const App = () => {
         setJoinError('');
         setPhase('multi_lobby');
       } else {
-        setJoinError('\u30eb\u30fc\u30e0\u60c5\u5831\u306e\u53d6\u5f97\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002');
+        setJoinError('Firebase\u672a\u8a2d\u5b9a\u306e\u305f\u30e1\u30eb\u30fc\u30e0\u306b\u53c2\u52a0\u3067\u304d\u307e\u305b\u3093\u3002\u30db\u30b9\u30c8\u306b\u30eb\u30fc\u30e0ID\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002');
       }
       return;
     }
     try {
       const roomRef = doc(db!, 'artifacts', appId, 'public', 'data', 'rooms', roomIdToUse);
       const snap = await getDoc(roomRef);
-      if (!snap.exists() || snap.data().status !== 'joining') {
-        setJoinError('無効なルームIDか、すでに開始されています。');
+      if (!snap.exists()) {
+        setJoinError('\u30eb\u30fc\u30e0ID\u300c' + roomIdToUse + '\u300d\u306f\u5b58\u5728\u3057\u307e\u305b\u3093\u3002\u30eb\u30fc\u30e0ID\u3092\u518d\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002');
+        return;
+      }
+      if (snap.data().status !== 'joining') {
+        setJoinError('\u3053\u306e\u30eb\u30fc\u30e0\u306f\u3059\u3067\u306b\u30b2\u30fc\u30e0\u5f8b\u4e2d\u307e\u305f\u306f\u7d42\u4e86\u3057\u3066\u3044\u307e\u3059\u3002');
         return;
       }
       setCurrentRoomId(roomIdToUse);
@@ -993,12 +997,22 @@ const App = () => {
           id: `p-${Date.now()}-${user.uid}`, uid: user.uid,
           name: nameToUse, hp: rd.settings.initialHP,
           status: 'alive', teamIndex: ti,
-          team: rd.settings.mode === 'team' ? (rd.settings.teamNames[ti] || `チーム${String.fromCharCode(65+ti)}`) : null
+          team: rd.settings.mode === 'team' ? (rd.settings.teamNames[ti] || `\u30c1\u30fc\u30e0${String.fromCharCode(65+ti)}`) : null
         }] });
       }
       setJoinError('');
       setPhase('multi_lobby');
-    } catch (e) { console.error('Joining room failed', e); setJoinError('ルーム情報の取得に失敗しました。'); }
+    } catch (e: any) {
+      console.error('Joining room failed', e);
+      const code: string = e?.code ?? '';
+      if (code === 'permission-denied' || code.includes('permission')) {
+        setJoinError('\u30a2\u30af\u30bb\u30b9\u6a29\u9650\u30a8\u30e9\u30fc (permission-denied)\u3002\nFirebase Console\u2192Firestore\u2192\u30eb\u30fc\u30eb\u3067 /artifacts/** \u306e\u8aad\u307f\u66f8\u304d\u3092\u8a31\u53ef\u3057\u3066\u304f\u3060\u3055\u3044\u3002');
+      } else if (code === 'unavailable' || code.includes('network')) {
+        setJoinError('\u30cd\u30c3\u30c8\u30ef\u30fc\u30af\u30a8\u30e9\u30fc\u3002\u63a5\u7d9a\u3092\u78ba\u8a8d\u3057\u3066\u518d\u5ea6\u304a\u8a66\u3057\u304f\u3060\u3055\u3044\u3002');
+      } else {
+        setJoinError('\u30eb\u30fc\u30e0\u60c5\u5831\u306e\u53d6\u5f97\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002(\u30a8\u30e9\u30fc: ' + (code || e?.message || 'unknown') + ')');
+      }
+    }
   };
 
   const startGameSingle = () => {
