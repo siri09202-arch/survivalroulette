@@ -961,20 +961,20 @@ const App = () => {
     const roomIdToUse = (overrideRoomId ?? joinRoomIdInput).trim().toUpperCase();
     const nameToUse = (overrideName ?? playerNameInput).trim();
     if (!roomIdToUse || !nameToUse || !user) return;
-    // db未設定かつホスト（overrideRoomId指定）の場合はローカルで登録してlobbyへ
+    // db未設定の場合はローカルで登録してlobbyへ（Firebase未設定環境対応）
     if (!db) {
-      if (overrideRoomId) {
-        const newPlayer = {
-          id: `p-${Date.now()}-${user.uid}`, uid: user.uid,
-          name: nameToUse, hp: initialHP,
-          status: 'alive' as const, teamIndex: 0, team: null
-        };
-        setPlayers([newPlayer]);
-        setJoinError('');
-        setPhase('multi_lobby');
-      } else {
-        setJoinError('Firebase\u672a\u8a2d\u5b9a\u306e\u305f\u30e1\u30eb\u30fc\u30e0\u306b\u53c2\u52a0\u3067\u304d\u307e\u305b\u3093\u3002\u30db\u30b9\u30c8\u306b\u30eb\u30fc\u30e0ID\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002');
-      }
+      const newPlayer = {
+        id: `p-${Date.now()}-${user.uid}`, uid: user.uid,
+        name: nameToUse, hp: initialHP,
+        status: 'alive' as const, teamIndex: 0, team: null
+      };
+      setCurrentRoomId(roomIdToUse);
+      setPlayers(prev => {
+        if (prev.find(p => p.uid === user.uid)) return prev;
+        return [...prev, newPlayer];
+      });
+      setJoinError('');
+      setPhase('multi_lobby');
       return;
     }
     try {
