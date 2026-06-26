@@ -222,6 +222,10 @@ const App = () => {
   const [user, setUser] = useState<any>(null);
   const [phase, setPhase] = useState('home');
   const [isMultiplayer, setIsMultiplayer] = useState(false);
+  const [isDbReady, setIsDbReady] = useState(!!db);
+  const [showFbSetup, setShowFbSetup] = useState(false);
+  const [fbConfigInput, setFbConfigInput] = useState('');
+  const [fbSetupError, setFbSetupError] = useState('');
   const [currentRoomId, setCurrentRoomId] = useState<string | null>(null);
   const [roomHostId, setRoomHostId] = useState<string | null>(null);
   const [joinRoomIdInput, setJoinRoomIdInput] = useState('');
@@ -934,54 +938,79 @@ const App = () => {
     const u = [...teamNames]; u[i] = name; setTeamNames(u);
   };
 
+  // ===== Firebase設定セットアップ =====
+  const handleFbSetupSave = () => {
+    setFbSetupError('');
+    let cfg: any = null;
+    const raw = fbConfigInput.trim();
+    // JSON直貼り or Firebase SDK config snippet 両対応
+    try {
+      // { apiKey: "...", ... } 形式 (SDK snippet) を JSON化
+      const jsonStr = raw
+        .replace(/^const\s+\w+\s*=\s*/, '')  // 'const firebaseConfig = ' を除去
+        .replace(/;$/, '')
+        .replace(/(\w+):/g, '"$1":')          // キーをクォート
+        .replace(/'/g, '"');                  // シングルクォートをダブルに
+      cfg = JSON.parse(jsonStr);
+    } catch {
+      try { cfg = JSON.parse(raw); } catch { cfg = null; }
+    }
+    if (!cfg?.apiKey || !cfg?.projectId) {
+      setFbSetupError('設定の解析に失敗しました。Firebase ConsoleのSDK設定をそのままペーストしてください。');
+      return;
+    }
+    try {
+      localStorage.setItem('firebase_config_json', JSON.stringify(cfg));
+      initFirebase(cfg);
+      setIsDbReady(!!db);
+      if (!db) {
+        setFbSetupError('Firebase初期化に失敗しました。設定値を確認してください。');
+        return;
+      }
+      // Auth再実行
+      if (auth) {
+        signInAnonymously(auth).catch(() => {});
+      }
+      setShowFbSetup(false);
+      setFbConfigInput('');
+      setFbSetupError('');
+      setIsDbReady(true);
+    } catch (e: any) {
+      setFbSetupError('エラー: ' + (e?.message ?? String(e)));
+    }
+  };
+
   // ===== Multiplayer ルーム操作 =====
   const handleCreateRoom = async () => {
     if (!user) { alert('\u8a8d\u8a3c\u4e2d\u3067\u3059\u3002\u3057\u3070\u3089\u304f\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002'); return; }
+    if (!db) { setPhase('multi_menu'); setShowFbSetup(true); return; }
     const roomId = Math.random().toString(36).substring(2, 7).toUpperCase();
-    if (db) {
-      try {
-        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomId), {
-          hostId: user.uid, status: 'joining', roomId,
-          settings: { title, mode, teamCount, teamNames, initialHP, spinDuration, healInterval,
-            isHpBalanceEnabled, isSpecialEventEnabled, specialEventProb, enabledSpecialEvents,
-            diceConfig, enabledFormats, config, reviveEvents },
-          players: [],
-          gameState: { turn: 1, logs: [], eliminated: [], isSpinning: false,
-            displayResult: { player: '\uff1f\uff1f\uff1f', amount: '\uff1f' }, lastResult: null }
-        });
-      } catch (e) {
-        console.error('Room creation failed', e);
-        alert('\u30eb\u30fc\u30e0\u306e\u4f5c\u6210\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002');
-        return;
-      }
+    try {
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomId), {
+        hostId: user.uid, status: 'joining', roomId,
+        settings: { title, mode, teamCount, teamNames, initialHP, spinDuration, healInterval,
+          isHpBalanceEnabled, isSpecialEventEnabled, specialEventProb, enabledSpecialEvents,
+          diceConfig, enabledFormats, config, reviveEvents },
+        players: [],
+        gameState: { turn: 1, logs: [], eliminated: [], isSpinning: false,
+          displayResult: { player: '\uff1f\uff1f\uff1f', amount: '\uff1f' }, lastResult: null }
+      });
+      setCurrentRoomId(roomId); setRoomHostId(user.uid); setPhase('multi_name');
+    } catch (e) {
+      console.error('Room creation failed', e);
+      alert('\u30eb\u30fc\u30e0\u306e\u4f5c\u6210\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002');
     }
-    setCurrentRoomId(roomId); setRoomHostId(user.uid); setPhase('multi_name');
   };
   const handleJoinRoomFinal = async (overrideRoomId?: string, overrideName?: string) => {
     const roomIdToUse = (overrideRoomId ?? joinRoomIdInput).trim().toUpperCase();
     const nameToUse = (overrideName ?? playerNameInput).trim();
     if (!roomIdToUse || !nameToUse || !user) return;
-    // db未設定の場合はローカルで登録してlobbyへ（Firebase未設定環境対応）
-    if (!db) {
-      const newPlayer = {
-        id: `p-${Date.now()}-${user.uid}`, uid: user.uid,
-        name: nameToUse, hp: initialHP,
-        status: 'alive' as const, teamIndex: 0, team: null
-      };
-      setCurrentRoomId(roomIdToUse);
-      setPlayers(prev => {
-        if (prev.find(p => p.uid === user.uid)) return prev;
-        return [...prev, newPlayer];
-      });
-      setJoinError('');
-      setPhase('multi_lobby');
-      return;
-    }
+    if (!db) { setPhase('multi_menu'); setShowFbSetup(true); return; }
     try {
       const roomRef = doc(db!, 'artifacts', appId, 'public', 'data', 'rooms', roomIdToUse);
       const snap = await getDoc(roomRef);
       if (!snap.exists()) {
-        setJoinError('\u30eb\u30fc\u30e0ID\u300c' + roomIdToUse + '\u300d\u306f\u5b58\u5728\u3057\u307e\u305b\u3093\u3002\u30eb\u30fc\u30e0ID\u3092\u518d\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002');
+        setJoinError('\u30eb\u30fc\u30e0ID\u300c' + roomIdToUse + '\u300d\u306f\u5b58\u5728\u3057\u307e\u305b\u3093\u3002');
         return;
       }
       if (snap.data().status !== 'joining') {
@@ -1006,7 +1035,7 @@ const App = () => {
       console.error('Joining room failed', e);
       const code: string = e?.code ?? '';
       if (code === 'permission-denied' || code.includes('permission')) {
-        setJoinError('\u30a2\u30af\u30bb\u30b9\u6a29\u9650\u30a8\u30e9\u30fc (permission-denied)\u3002\nFirebase Console\u2192Firestore\u2192\u30eb\u30fc\u30eb\u3067 /artifacts/** \u306e\u8aad\u307f\u66f8\u304d\u3092\u8a31\u53ef\u3057\u3066\u304f\u3060\u3055\u3044\u3002');
+        setJoinError('Firestore\u30bb\u30ad\u30e5\u30ea\u30c6\u30a3\u30eb\u30fc\u30eb\u30a8\u30e9\u30fc\u3002Firebase Console\u2192Firestore\u2192\u30eb\u30fc\u30eb\u3067 /artifacts/** \u306e\u8aad\u307f\u66f8\u304d\u3092\u8a31\u53ef\u3057\u3066\u304f\u3060\u3055\u3044\u3002');
       } else if (code === 'unavailable' || code.includes('network')) {
         setJoinError('\u30cd\u30c3\u30c8\u30ef\u30fc\u30af\u30a8\u30e9\u30fc\u3002\u63a5\u7d9a\u3092\u78ba\u8a8d\u3057\u3066\u518d\u5ea6\u304a\u8a66\u3057\u304f\u3060\u3055\u3044\u3002');
       } else {
@@ -1118,15 +1147,69 @@ const App = () => {
   if (phase === 'multi_menu') return (
     <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6">
       <div className="w-full max-w-md bg-slate-900 rounded-[2.5rem] border border-slate-800 p-8 shadow-2xl flex flex-col items-center text-center">
-        <h2 className="text-3xl font-black italic tracking-tighter text-indigo-400 mb-8 uppercase">Multiplayer</h2>
-        <div className="flex flex-col gap-4 w-full">
-          <button onClick={() => { setIsMultiplayer(true); setPhase('setup'); }} className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-black text-xl transition-all">マルチプレイルーム作成</button>
-          <button onClick={() => { setIsMultiplayer(true); setPhase('multi_join_id'); }} className="w-full py-4 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-black text-xl transition-all">ID入室</button>
-        </div>
-        <button onClick={() => setPhase('home')} className="mt-8 text-slate-500 font-bold hover:text-white transition-colors">← 戻る</button>
+        <h2 className="text-3xl font-black italic tracking-tighter text-indigo-400 mb-2 uppercase">Multiplayer</h2>
+
+        {/* Firebase未設定バナー */}
+        {!isDbReady && !showFbSetup && (
+          <div className="w-full bg-amber-900/40 border border-amber-500/50 rounded-2xl p-3 mb-4 text-left">
+            <p className="text-amber-300 text-xs font-bold mb-2">⚠️ オンライン同期が未設定です</p>
+            <p className="text-amber-200/70 text-[10px] mb-3">Kahoot!のように複数端末でリアルタイム同期するには Firebase の設定が必要です。</p>
+            <button onClick={() => setShowFbSetup(true)} className="w-full py-2 bg-amber-500 hover:bg-amber-400 text-black rounded-xl font-black text-sm transition-all">
+              Firebase を設定する →
+            </button>
+          </div>
+        )}
+
+        {/* Firebase設定フォーム */}
+        {showFbSetup && (
+          <div className="w-full mb-4 text-left space-y-3">
+            <div className="bg-slate-800 rounded-2xl p-4 border border-slate-700">
+              <p className="text-white font-black text-sm mb-1">Firebase 設定を貼り付け</p>
+              <p className="text-slate-400 text-[10px] mb-3">
+                <a href="https://console.firebase.google.com/" target="_blank" rel="noreferrer" className="text-indigo-400 underline">Firebase Console</a>
+                {' → プロジェクト設定 → マイアプリ → SDK設定と構成'}
+                {' の firebaseConfig オブジェクト（{ apiKey: "…" } の部分）をそのまま貼り付けてください。'}
+              </p>
+              <textarea
+                value={fbConfigInput}
+                onChange={e => setFbConfigInput(e.target.value)}
+                placeholder={`{\n  apiKey: "AIza...",\n  authDomain: "xxx.firebaseapp.com",\n  projectId: "xxx",\n  ...\n}`}
+                rows={6}
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-slate-200 font-mono outline-none focus:border-indigo-500 resize-none"
+              />
+              {fbSetupError && <p className="text-red-400 text-[10px] mt-1 font-bold">{fbSetupError}</p>}
+              <div className="flex gap-2 mt-3">
+                <button onClick={handleFbSetupSave} disabled={!fbConfigInput.trim()} className={`flex-1 py-2.5 rounded-xl font-black text-sm transition-all ${fbConfigInput.trim() ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-slate-700 text-slate-500'}`}>
+                  保存して接続
+                </button>
+                <button onClick={() => { setShowFbSetup(false); setFbSetupError(''); }} className="px-4 py-2.5 rounded-xl font-black text-sm bg-slate-700 hover:bg-slate-600 text-slate-300 transition-all">
+                  キャンセル
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Firebase設定済み表示 */}
+        {isDbReady && (
+          <div className="w-full bg-emerald-900/30 border border-emerald-500/30 rounded-2xl px-4 py-2 mb-4 flex items-center gap-2">
+            <span className="text-emerald-400 text-xs">●</span>
+            <span className="text-emerald-300 text-xs font-bold">オンライン同期: 接続済み</span>
+            <button onClick={() => { localStorage.removeItem('firebase_config_json'); setIsDbReady(false); }} className="ml-auto text-slate-500 text-[10px] hover:text-red-400 transition-colors">解除</button>
+          </div>
+        )}
+
+        {!showFbSetup && (
+          <div className="flex flex-col gap-4 w-full">
+            <button onClick={() => { setIsMultiplayer(true); setPhase('setup'); }} className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-black text-xl transition-all">マルチプレイルーム作成</button>
+            <button onClick={() => { setIsMultiplayer(true); setPhase('multi_join_id'); }} className="w-full py-4 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-black text-xl transition-all">ID入室</button>
+          </div>
+        )}
+        <button onClick={() => { setPhase('home'); setShowFbSetup(false); setFbSetupError(''); }} className="mt-8 text-slate-500 font-bold hover:text-white transition-colors">← 戻る</button>
       </div>
     </div>
   );
+
 
   if (phase === 'multi_join_id') return (
     <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6">
