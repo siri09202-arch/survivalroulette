@@ -7,43 +7,40 @@ import {
   Edit3, GripVertical, Scale
 } from 'lucide-react';
 
-import { initializeApp, getApps } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, doc, setDoc, getDoc, onSnapshot, updateDoc } from 'firebase/firestore';
-
-declare const __firebase_config: string | undefined;
-declare const __initial_auth_token: string | undefined;
-declare const __app_id: string | undefined;
-
-
-
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-let app: ReturnType<typeof initializeApp> | undefined;
-let auth: ReturnType<typeof getAuth> | undefined;
-let db: ReturnType<typeof getFirestore> | undefined;
-
-// Firebase設定の初期化（__firebase_config またはlocalStorageから）
-const initFirebase = (cfg: any) => {
-  if (!cfg?.apiKey) return;
-  try {
-    const existingApp = getApps().find(a => a.name === '[DEFAULT]');
-    app = existingApp || initializeApp(cfg);
-    auth = getAuth(app);
-    db = getFirestore(app);
-  } catch (e) { console.error("Firebase initialization failed:", e); }
+// ===== ルームAPI ヘルパー =====
+const API = {
+  getRoom: async (roomId: string) => {
+    const res = await fetch(`/api/rooms/${roomId}`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  },
+  createRoom: async (data: any) => {
+    const res = await fetch('/api/rooms', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  },
+  patchRoom: async (roomId: string, patch: any) => {
+    const res = await fetch(`/api/rooms/${roomId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch)
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  }
 };
 
-// 起動時: __firebase_config またはlocalStorageから初期化
-const hasBuiltinConfig = firebaseConfig && firebaseConfig.apiKey;
-if (hasBuiltinConfig) {
-  initFirebase(firebaseConfig);
-} else {
-  try {
-    const stored = localStorage.getItem('firebase_config_json');
-    if (stored) { initFirebase(JSON.parse(stored)); }
-  } catch {}
-}
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'survival-roulette';
+// ===== UID管理（localStorage永続） =====
+const getOrCreateUid = (): string => {
+  let uid = localStorage.getItem('player_uid');
+  if (!uid) { uid = 'uid-' + Math.random().toString(36).substring(2, 12); localStorage.setItem('player_uid', uid); }
+  return uid;
+};
 
 interface Player {
   id: string; uid?: string; name: string; hp: number;
@@ -219,13 +216,9 @@ const convertNumber = (num: number | string, format: string): string | number =>
 };
 
 const App = () => {
-  const [user, setUser] = useState<any>(null);
+  const [myUid] = useState<string>(() => getOrCreateUid());
   const [phase, setPhase] = useState('home');
   const [isMultiplayer, setIsMultiplayer] = useState(false);
-  const [isDbReady, setIsDbReady] = useState(!!db);
-  const [showFbSetup, setShowFbSetup] = useState(false);
-  const [fbConfigInput, setFbConfigInput] = useState('');
-  const [fbSetupError, setFbSetupError] = useState('');
   const [currentRoomId, setCurrentRoomId] = useState<string | null>(null);
   const [roomHostId, setRoomHostId] = useState<string | null>(null);
   const [joinRoomIdInput, setJoinRoomIdInput] = useState('');
@@ -354,55 +347,36 @@ const App = () => {
   useEffect(() => { setLocalDiceFaceMin(String(diceConfig.faceMin)); }, [diceConfig.faceMin]);
   useEffect(() => { setLocalDiceFaceMax(String(diceConfig.faceMax)); }, [diceConfig.faceMax]);
 
-  // ===== Firebase Auth =====
+  // ===== KVポーリング（1秒間隔） =====
   useEffect(() => {
-    const initAuth = async () => {
-      if (auth && firebaseConfig?.apiKey) {
-        try {
-          if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-            await signInWithCustomToken(auth, __initial_auth_token);
-          } else {
-            await signInAnonymously(auth);
-          }
-        } catch (err) { console.error("Firebase auth failed:", err); }
-        const unsub = onAuthStateChanged(auth, setUser);
-        return () => unsub();
-      } else {
-        // Firebase未設定時: ランダムなUIDで仮ユーザーを生成
-        const fallbackUid = 'local-' + Math.random().toString(36).substring(2, 10);
-        setUser({ uid: fallbackUid });
-      }
+    if (!currentRoomId) return;
+    const poll = async () => {
+      try {
+        const data = await API.getRoom(currentRoomId);
+        if (!data) return;
+        setRoomHostId(data.hostId);
+        if (data.status === 'joining') {
+          syncSettingsFromRoom(data.settings);
+          setPlayers(data.players);
+          setPhase(prev => (prev !== 'multi_lobby' && prev !== 'multi_name') ? 'multi_lobby' : prev);
+        }
+        if (data.status === 'playing') {
+          setPhase(prev => prev !== 'playing' ? 'playing' : prev);
+          setPlayers(data.players); setTurn(data.gameState.turn);
+          setLogs(data.gameState.logs); setEliminated(data.gameState.eliminated);
+          setIsSpinning(data.gameState.isSpinning);
+          setDisplayResult(data.gameState.displayResult); setLastResult(data.gameState.lastResult);
+        }
+        if (data.status === 'result') {
+          setPhase(prev => prev !== 'result' ? 'result' : prev);
+          setPlayers(data.players); setLogs(data.gameState.logs); setEliminated(data.gameState.eliminated);
+        }
+      } catch {}
     };
-    initAuth();
-  }, []);
-
-  // ===== Firestore リアルタイム同期 =====
-  useEffect(() => {
-    if (!user || !currentRoomId || !db) return;
-    const roomRef = doc(db!, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId);
-    const unsub = onSnapshot(roomRef, (snap) => {
-      if (!snap.exists()) return;
-      const data = snap.data();
-      setRoomHostId(data.hostId);
-      if (data.status === 'joining') {
-        syncSettingsFromRoom(data.settings);
-        setPlayers(data.players);
-        if (phase !== 'multi_lobby' && phase !== 'multi_name') setPhase('multi_lobby');
-      }
-      if (data.status === 'playing') {
-        if (phase !== 'playing') setPhase('playing');
-        setPlayers(data.players); setTurn(data.gameState.turn);
-        setLogs(data.gameState.logs); setEliminated(data.gameState.eliminated);
-        setIsSpinning(data.gameState.isSpinning);
-        setDisplayResult(data.gameState.displayResult); setLastResult(data.gameState.lastResult);
-      }
-      if (data.status === 'result') {
-        if (phase !== 'result') setPhase('result');
-        setPlayers(data.players); setLogs(data.gameState.logs); setEliminated(data.gameState.eliminated);
-      }
-    }, (err) => console.error("Firestore onSnapshot error", err));
-    return () => unsub();
-  }, [user, currentRoomId, phase]);
+    poll();
+    const id = setInterval(poll, 1000);
+    return () => clearInterval(id);
+  }, [currentRoomId]);
 
   useEffect(() => {
     if (lastResult?.targetIds) {
@@ -416,7 +390,7 @@ const App = () => {
   // マルチ非ホスト用のスピン演出
   useEffect(() => {
     let interval: ReturnType<typeof setInterval>;
-    if (isMultiplayer && isSpinning && user?.uid !== roomHostId && phase === 'playing') {
+    if (isMultiplayer && isSpinning && myUid !== roomHostId && phase === 'playing') {
       interval = setInterval(() => {
         const alive = players.filter(p => p.status === 'alive');
         if (alive.length > 0) {
@@ -426,7 +400,7 @@ const App = () => {
       }, 60);
     }
     return () => clearInterval(interval);
-  }, [isMultiplayer, isSpinning, user, roomHostId, players, phase]);
+  }, [isMultiplayer, isSpinning, myUid, roomHostId, players, phase]);
 
   const syncSettingsFromRoom = (s: any) => {
     setTitle(s.title || ''); setMode(s.mode); setTeamCount(s.teamCount); setTeamNames(s.teamNames);
@@ -540,9 +514,9 @@ const App = () => {
 
   const updateDisplayResultMulti = async (res: DisplayResult) => {
     setDisplayResult(res);
-    if (isMultiplayer && user?.uid === roomHostId && db && currentRoomId) {
+    if (isMultiplayer && myUid === roomHostId && currentRoomId) {
       try {
-        await updateDoc(doc(db!, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId), { 'gameState.displayResult': res });
+        await API.patchRoom(currentRoomId, { 'gameState.displayResult': res });
       } catch {}
     }
   };
@@ -553,7 +527,7 @@ const App = () => {
   // ===== メインスピン =====
   const spinRoulette = async () => {
     if (isSpinning) return;
-    if (isMultiplayer && user?.uid !== roomHostId) return;
+    if (isMultiplayer && myUid !== roomHostId) return;
 
     const alivePlayers = players.filter(p => p.status === 'alive');
     const deadPlayers  = players.filter(p => p.status === 'dead');
@@ -562,15 +536,15 @@ const App = () => {
       : alivePlayers.length <= 1;
 
     if (isGameOver && !isReviveTurn) {
-      if (isMultiplayer && db && currentRoomId) {
-        await updateDoc(doc(db!, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId), { status: 'result' }).catch(() => {});
+      if (isMultiplayer && currentRoomId) {
+        await API.patchRoom(currentRoomId, { status: 'result' }).catch(() => {});
       } else { setPhase('result'); }
       return;
     }
 
     setIsSpinning(true);
-    if (isMultiplayer && db && currentRoomId) {
-      await updateDoc(doc(db!, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId), { 'gameState.isSpinning': true }).catch(() => {});
+    if (isMultiplayer && currentRoomId) {
+      await API.patchRoom(currentRoomId, { 'gameState.isSpinning': true }).catch(() => {});
     }
 
     let effectType = isReviveTurn ? 'revive' : (isHealTurn ? 'heal' : 'damage');
@@ -803,12 +777,11 @@ const App = () => {
     if (customLogData) turnLogs.push({ id: Date.now(), turn, type: customLogData.type||'system', message: customLogData.message||'', amount: customLogData.amount, target: customLogData.target });
     newlyDead.forEach((d, i) => turnLogs.push({ id: Date.now()+i+1, turn, type: 'death', message: `${d.name}が脱落...`, target: d.name }));
 
-    if (isMultiplayer && db && currentRoomId) {
+    if (isMultiplayer && currentRoomId) {
       try {
-        const roomRef = doc(db!, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId);
         const afterAlive = updatedPlayers.filter(p => p.status === 'alive');
         const isFinished = mode === 'team' ? new Set(afterAlive.map(p => p.team)).size <= 1 : afterAlive.length <= 1;
-        await updateDoc(roomRef, {
+        await API.patchRoom(currentRoomId, {
           players: updatedPlayers,
           'gameState.turn': isFinished ? turn : turn + 1,
           'gameState.logs': [...turnLogs, ...logs].slice(0, 100),
@@ -925,9 +898,9 @@ const App = () => {
   const updateReviveEventState = (id: number, field: string, val: string) =>
     setReviveEvents(reviveEvents.map(r => r.id === id ? { ...r, [field]: field === 'turn' ? (parseInt(val)||0) : val } as ReviveEvent : r));
   const autoAssignTeams = () => {
-    if (isMultiplayer && user?.uid === roomHostId && db && currentRoomId) {
+    if (isMultiplayer && myUid === roomHostId && currentRoomId) {
       const updated = [...players].map((p, i) => ({ ...p, teamIndex: i % teamCount, team: teamNames[i % teamCount] }));
-      updateDoc(doc(db!, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId), { players: updated }).catch(() => {});
+      API.patchRoom(currentRoomId, { players: updated }).catch(() => {});
     } else if (!isMultiplayer) {
       setManualPlayers(prev => prev.map((p, i) => ({ ...p, teamIndex: i % teamCount })));
     }
@@ -938,56 +911,12 @@ const App = () => {
     const u = [...teamNames]; u[i] = name; setTeamNames(u);
   };
 
-  // ===== Firebase設定セットアップ =====
-  const handleFbSetupSave = () => {
-    setFbSetupError('');
-    let cfg: any = null;
-    const raw = fbConfigInput.trim();
-    // JSON直貼り or Firebase SDK config snippet 両対応
-    try {
-      // { apiKey: "...", ... } 形式 (SDK snippet) を JSON化
-      const jsonStr = raw
-        .replace(/^const\s+\w+\s*=\s*/, '')  // 'const firebaseConfig = ' を除去
-        .replace(/;$/, '')
-        .replace(/(\w+):/g, '"$1":')          // キーをクォート
-        .replace(/'/g, '"');                  // シングルクォートをダブルに
-      cfg = JSON.parse(jsonStr);
-    } catch {
-      try { cfg = JSON.parse(raw); } catch { cfg = null; }
-    }
-    if (!cfg?.apiKey || !cfg?.projectId) {
-      setFbSetupError('設定の解析に失敗しました。Firebase ConsoleのSDK設定をそのままペーストしてください。');
-      return;
-    }
-    try {
-      localStorage.setItem('firebase_config_json', JSON.stringify(cfg));
-      initFirebase(cfg);
-      setIsDbReady(!!db);
-      if (!db) {
-        setFbSetupError('Firebase初期化に失敗しました。設定値を確認してください。');
-        return;
-      }
-      // Auth再実行
-      if (auth) {
-        signInAnonymously(auth).catch(() => {});
-      }
-      setShowFbSetup(false);
-      setFbConfigInput('');
-      setFbSetupError('');
-      setIsDbReady(true);
-    } catch (e: any) {
-      setFbSetupError('エラー: ' + (e?.message ?? String(e)));
-    }
-  };
-
   // ===== Multiplayer ルーム操作 =====
   const handleCreateRoom = async () => {
-    if (!user) { alert('\u8a8d\u8a3c\u4e2d\u3067\u3059\u3002\u3057\u3070\u3089\u304f\u304a\u5f85\u3061\u304f\u3060\u3055\u3044\u3002'); return; }
-    if (!db) { setPhase('multi_menu'); setShowFbSetup(true); return; }
     const roomId = Math.random().toString(36).substring(2, 7).toUpperCase();
     try {
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomId), {
-        hostId: user.uid, status: 'joining', roomId,
+      await API.createRoom({
+        hostId: myUid, status: 'joining', roomId,
         settings: { title, mode, teamCount, teamNames, initialHP, spinDuration, healInterval,
           isHpBalanceEnabled, isSpecialEventEnabled, specialEventProb, enabledSpecialEvents,
           diceConfig, enabledFormats, config, reviveEvents },
@@ -995,7 +924,7 @@ const App = () => {
         gameState: { turn: 1, logs: [], eliminated: [], isSpinning: false,
           displayResult: { player: '\uff1f\uff1f\uff1f', amount: '\uff1f' }, lastResult: null }
       });
-      setCurrentRoomId(roomId); setRoomHostId(user.uid); setPhase('multi_name');
+      setCurrentRoomId(roomId); setRoomHostId(myUid); setPhase('multi_name');
     } catch (e) {
       console.error('Room creation failed', e);
       alert('\u30eb\u30fc\u30e0\u306e\u4f5c\u6210\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002');
@@ -1004,45 +933,28 @@ const App = () => {
   const handleJoinRoomFinal = async (overrideRoomId?: string, overrideName?: string) => {
     const roomIdToUse = (overrideRoomId ?? joinRoomIdInput).trim().toUpperCase();
     const nameToUse = (overrideName ?? playerNameInput).trim();
-    if (!roomIdToUse || !nameToUse || !user) return;
-    if (!db) { setPhase('multi_menu'); setShowFbSetup(true); return; }
+    if (!roomIdToUse || !nameToUse) return;
     try {
-      const roomRef = doc(db!, 'artifacts', appId, 'public', 'data', 'rooms', roomIdToUse);
-      const snap = await getDoc(roomRef);
-      if (!snap.exists()) {
-        setJoinError('\u30eb\u30fc\u30e0ID\u300c' + roomIdToUse + '\u300d\u306f\u5b58\u5728\u3057\u307e\u305b\u3093\u3002');
-        return;
-      }
-      if (snap.data().status !== 'joining') {
-        setJoinError('\u3053\u306e\u30eb\u30fc\u30e0\u306f\u3059\u3067\u306b\u30b2\u30fc\u30e0\u5f8b\u4e2d\u307e\u305f\u306f\u7d42\u4e86\u3057\u3066\u3044\u307e\u3059\u3002');
-        return;
-      }
+      const rd = await API.getRoom(roomIdToUse);
+      if (!rd) { setJoinError('\u30eb\u30fc\u30e0ID\u300c' + roomIdToUse + '\u300d\u306f\u5b58\u5728\u3057\u307e\u305b\u3093\u3002'); return; }
+      if (rd.status !== 'joining') { setJoinError('\u3053\u306e\u30eb\u30fc\u30e0\u306f\u3059\u3067\u306b\u30b2\u30fc\u30e0\u5f53\u4e2d\u307e\u305f\u306f\u7d42\u4e86\u3057\u3066\u3044\u307e\u3059\u3002'); return; }
       setCurrentRoomId(roomIdToUse);
-      syncSettingsFromRoom(snap.data().settings);
-      const rd = snap.data();
-      if (!rd.players.find((p: Player) => p.uid === user.uid)) {
+      syncSettingsFromRoom(rd.settings);
+      if (!rd.players.find((p: Player) => p.uid === myUid)) {
         const ti = rd.settings.mode === 'team' ? (rd.players.length % rd.settings.teamCount) : 0;
-        await updateDoc(roomRef, { players: [...rd.players, {
-          id: `p-${Date.now()}-${user.uid}`, uid: user.uid,
+        await API.patchRoom(roomIdToUse, { players: [...rd.players, {
+          id: `p-${Date.now()}-${myUid}`, uid: myUid,
           name: nameToUse, hp: rd.settings.initialHP,
           status: 'alive', teamIndex: ti,
           team: rd.settings.mode === 'team' ? (rd.settings.teamNames[ti] || `\u30c1\u30fc\u30e0${String.fromCharCode(65+ti)}`) : null
         }] });
       }
-      setJoinError('');
-      setPhase('multi_lobby');
+      setJoinError(''); setPhase('multi_lobby');
     } catch (e: any) {
-      console.error('Joining room failed', e);
-      const code: string = e?.code ?? '';
-      if (code === 'permission-denied' || code.includes('permission')) {
-        setJoinError('Firestore\u30bb\u30ad\u30e5\u30ea\u30c6\u30a3\u30eb\u30fc\u30eb\u30a8\u30e9\u30fc\u3002Firebase Console\u2192Firestore\u2192\u30eb\u30fc\u30eb\u3067 /artifacts/** \u306e\u8aad\u307f\u66f8\u304d\u3092\u8a31\u53ef\u3057\u3066\u304f\u3060\u3055\u3044\u3002');
-      } else if (code === 'unavailable' || code.includes('network')) {
-        setJoinError('\u30cd\u30c3\u30c8\u30ef\u30fc\u30af\u30a8\u30e9\u30fc\u3002\u63a5\u7d9a\u3092\u78ba\u8a8d\u3057\u3066\u518d\u5ea6\u304a\u8a66\u3057\u304f\u3060\u3055\u3044\u3002');
-      } else {
-        setJoinError('\u30eb\u30fc\u30e0\u60c5\u5831\u306e\u53d6\u5f97\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002(\u30a8\u30e9\u30fc: ' + (code || e?.message || 'unknown') + ')');
-      }
+      setJoinError('\u5165\u5c4e\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002(\u30a8\u30e9\u30fc: ' + (e?.message || 'unknown') + ')');
     }
   };
+
 
   const startGameSingle = () => {
     if (totalProb !== 100 || manualPlayers.length < 2) return;
@@ -1059,10 +971,10 @@ const App = () => {
   };
 
   const startMultiplayerGame = async () => {
-    if (!db || !currentRoomId) return;
+    if (!currentRoomId) return;
     const colors = ['text-red-400','text-blue-400','text-emerald-400','text-amber-400','text-purple-400','text-cyan-400'];
     try {
-      await updateDoc(doc(db!, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId), {
+      await API.patchRoom(currentRoomId, {
         status: 'playing',
         players: players.map(p => ({ ...p, teamColor: mode === 'team' ? colors[(p.teamIndex||0) % colors.length] : null })),
         'gameState.turn': 1, 'gameState.logs': [], 'gameState.eliminated': [], 'gameState.lastResult': null
@@ -1076,9 +988,9 @@ const App = () => {
   const onDrop = (e: React.DragEvent, ti: number) => { e.preventDefault(); if (draggedPlayer && !isMultiplayer) { updatePlayerTeam(draggedPlayer.name, ti); setDraggedPlayer(null); } };
   const onDropLobby = async (e: React.DragEvent, ti: number) => {
     e.preventDefault();
-    if (draggedPlayer && isMultiplayer && user?.uid === roomHostId && db && currentRoomId) {
+    if (draggedPlayer && isMultiplayer && myUid === roomHostId && currentRoomId) {
       try {
-        await updateDoc(doc(db!, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId), {
+        await API.patchRoom(currentRoomId, {
           players: players.map(p => (p as Player).id === (draggedPlayer as Player).id ? { ...p, teamIndex: ti, team: teamNames[ti] } : p)
         });
       } catch {}
@@ -1094,9 +1006,9 @@ const App = () => {
   };
   const onTouchEnd = () => { if (draggedPlayer && touchTargetTeam !== null && !isMultiplayer) updatePlayerTeam(draggedPlayer.name, touchTargetTeam); setDraggedPlayer(null); setTouchTargetTeam(null); };
   const onTouchEndLobby = async () => {
-    if (draggedPlayer && touchTargetTeam !== null && isMultiplayer && user?.uid === roomHostId && db && currentRoomId) {
+    if (draggedPlayer && touchTargetTeam !== null && isMultiplayer && myUid === roomHostId && currentRoomId) {
       try {
-        await updateDoc(doc(db!, 'artifacts', appId, 'public', 'data', 'rooms', currentRoomId), {
+        await API.patchRoom(currentRoomId, {
           players: players.map(p => (p as Player).id === (draggedPlayer as Player).id ? { ...p, teamIndex: touchTargetTeam, team: teamNames[touchTargetTeam] } : p)
         });
       } catch {}
@@ -1149,63 +1061,17 @@ const App = () => {
       <div className="w-full max-w-md bg-slate-900 rounded-[2.5rem] border border-slate-800 p-8 shadow-2xl flex flex-col items-center text-center">
         <h2 className="text-3xl font-black italic tracking-tighter text-indigo-400 mb-2 uppercase">Multiplayer</h2>
 
-        {/* Firebase未設定バナー */}
-        {!isDbReady && !showFbSetup && (
-          <div className="w-full bg-amber-900/40 border border-amber-500/50 rounded-2xl p-3 mb-4 text-left">
-            <p className="text-amber-300 text-xs font-bold mb-2">⚠️ オンライン同期が未設定です</p>
-            <p className="text-amber-200/70 text-[10px] mb-3">Kahoot!のように複数端末でリアルタイム同期するには Firebase の設定が必要です。</p>
-            <button onClick={() => setShowFbSetup(true)} className="w-full py-2 bg-amber-500 hover:bg-amber-400 text-black rounded-xl font-black text-sm transition-all">
-              Firebase を設定する →
-            </button>
-          </div>
-        )}
+        {/* オンライン同期バッジ */}
+        <div className="w-full bg-emerald-900/30 border border-emerald-500/30 rounded-2xl px-4 py-2 mb-6 flex items-center gap-2">
+          <span className="text-emerald-400 text-xs animate-pulse">●</span>
+          <span className="text-emerald-300 text-xs font-bold">オンライン同期: 接続済み</span>
+        </div>
 
-        {/* Firebase設定フォーム */}
-        {showFbSetup && (
-          <div className="w-full mb-4 text-left space-y-3">
-            <div className="bg-slate-800 rounded-2xl p-4 border border-slate-700">
-              <p className="text-white font-black text-sm mb-1">Firebase 設定を貼り付け</p>
-              <p className="text-slate-400 text-[10px] mb-3">
-                <a href="https://console.firebase.google.com/" target="_blank" rel="noreferrer" className="text-indigo-400 underline">Firebase Console</a>
-                {' → プロジェクト設定 → マイアプリ → SDK設定と構成'}
-                {' の firebaseConfig オブジェクト（{ apiKey: "…" } の部分）をそのまま貼り付けてください。'}
-              </p>
-              <textarea
-                value={fbConfigInput}
-                onChange={e => setFbConfigInput(e.target.value)}
-                placeholder={`{\n  apiKey: "AIza...",\n  authDomain: "xxx.firebaseapp.com",\n  projectId: "xxx",\n  ...\n}`}
-                rows={6}
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-slate-200 font-mono outline-none focus:border-indigo-500 resize-none"
-              />
-              {fbSetupError && <p className="text-red-400 text-[10px] mt-1 font-bold">{fbSetupError}</p>}
-              <div className="flex gap-2 mt-3">
-                <button onClick={handleFbSetupSave} disabled={!fbConfigInput.trim()} className={`flex-1 py-2.5 rounded-xl font-black text-sm transition-all ${fbConfigInput.trim() ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-slate-700 text-slate-500'}`}>
-                  保存して接続
-                </button>
-                <button onClick={() => { setShowFbSetup(false); setFbSetupError(''); }} className="px-4 py-2.5 rounded-xl font-black text-sm bg-slate-700 hover:bg-slate-600 text-slate-300 transition-all">
-                  キャンセル
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Firebase設定済み表示 */}
-        {isDbReady && (
-          <div className="w-full bg-emerald-900/30 border border-emerald-500/30 rounded-2xl px-4 py-2 mb-4 flex items-center gap-2">
-            <span className="text-emerald-400 text-xs">●</span>
-            <span className="text-emerald-300 text-xs font-bold">オンライン同期: 接続済み</span>
-            <button onClick={() => { localStorage.removeItem('firebase_config_json'); setIsDbReady(false); }} className="ml-auto text-slate-500 text-[10px] hover:text-red-400 transition-colors">解除</button>
-          </div>
-        )}
-
-        {!showFbSetup && (
-          <div className="flex flex-col gap-4 w-full">
-            <button onClick={() => { setIsMultiplayer(true); setPhase('setup'); }} className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-black text-xl transition-all">マルチプレイルーム作成</button>
-            <button onClick={() => { setIsMultiplayer(true); setPhase('multi_join_id'); }} className="w-full py-4 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-black text-xl transition-all">ID入室</button>
-          </div>
-        )}
-        <button onClick={() => { setPhase('home'); setShowFbSetup(false); setFbSetupError(''); }} className="mt-8 text-slate-500 font-bold hover:text-white transition-colors">← 戻る</button>
+        <div className="flex flex-col gap-4 w-full">
+          <button onClick={() => { setIsMultiplayer(true); setPhase('setup'); }} className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-black text-xl transition-all">マルチプレイルーム作成</button>
+          <button onClick={() => { setIsMultiplayer(true); setPhase('multi_join_id'); }} className="w-full py-4 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-black text-xl transition-all">ID入室</button>
+        </div>
+        <button onClick={() => setPhase('home')} className="mt-8 text-slate-500 font-bold hover:text-white transition-colors">← 戻る</button>
       </div>
     </div>
   );
@@ -1277,7 +1143,7 @@ const App = () => {
   );
 
   if (phase === 'multi_lobby') {
-    const isHost = user?.uid === roomHostId;
+    const isHost = myUid === roomHostId;
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 p-4 md:p-6 flex flex-col items-center justify-center">
         <div className="bg-slate-900 rounded-[3rem] shadow-2xl border border-slate-800 w-full max-w-4xl p-6 md:p-10 flex flex-col h-[85vh]">
