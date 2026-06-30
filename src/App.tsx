@@ -1517,7 +1517,7 @@ const App = () => {
 
   const survivorsSorted = players.filter(p => p.status === 'alive').sort((a,b) => b.hp - a.hp);
   const totalSurvivorHp = survivorsSorted.reduce((s,p) => s + p.hp, 0);
-  const isHost = isMultiplayer ? (user?.uid === roomHostId) : true;
+  const isHost = isMultiplayer ? (myUid === roomHostId) : true;
 
   // ダイス表示かどうか
   const isDiceDisplay = typeof displayResult.amount === 'string' && String(displayResult.amount).includes('[') && String(displayResult.amount).includes('d');
