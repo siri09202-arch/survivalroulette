@@ -355,6 +355,7 @@ const App = () => {
         const data = await API.getRoom(currentRoomId);
         if (!data) return;
         setRoomHostId(data.hostId);
+        setIsMultiplayer(true); // ルームに接続している間は常にマルチプレイ
         if (data.status === 'joining') {
           syncSettingsFromRoom(data.settings);
           setPlayers(data.players);
@@ -949,7 +950,7 @@ const App = () => {
           team: rd.settings.mode === 'team' ? (rd.settings.teamNames[ti] || `\u30c1\u30fc\u30e0${String.fromCharCode(65+ti)}`) : null
         }] });
       }
-      setJoinError(''); setPhase('multi_lobby');
+      setJoinError(''); setIsMultiplayer(true); setPhase('multi_lobby');
     } catch (e: any) {
       setJoinError('\u5165\u5c4e\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002(\u30a8\u30e9\u30fc: ' + (e?.message || 'unknown') + ')');
     }
