@@ -46,6 +46,7 @@ interface Player {
   id: string; uid?: string; name: string; hp: number;
   status: 'alive' | 'dead'; team?: string | null;
   teamColor?: string | null; teamIndex?: number;
+  barriers?: number; // 無敵バリアカード枚数
 }
 interface EliminatedPlayer { name: string; turn: number; }
 interface LogEntry { id: number; turn: number; type: string; message: string; amount?: string | number; target?: string; }
@@ -249,6 +250,9 @@ const App = () => {
     'diceMode','reverseHealDamage','instantDeath','trueRandom'
   ]);
   const [isHpBalanceEnabled, setIsHpBalanceEnabled] = useState(true);
+  const [isBarrierEventEnabled, setIsBarrierEventEnabled] = useState(true); // 無敵バリアカードイベント
+  const [isSpecialMultiEnabled, setIsSpecialMultiEnabled] = useState(false); // 特別イベント重複発動
+  const [isSpectatorMode, setIsSpectatorMode] = useState(false); // 観戦モード（ホストのみ）
 
   // numberFormat は spinRoulette 内でローカル変数として使うため
   // state は「表示バッジ用」のみ
@@ -332,6 +336,8 @@ const App = () => {
   const [localDiceMaxCount, setLocalDiceMaxCount] = useState('1');
   const [localDiceFaceMin, setLocalDiceFaceMin] = useState('1');
   const [localDiceFaceMax, setLocalDiceFaceMax] = useState('6');
+  // 復活イベントのターン入力用ローカルstring（入力中は文字列保持、確定時のみ数値に変換）
+  const [reviveTurnInputs, setReviveTurnInputs] = useState<Record<number, string>>({ 1: '50', 2: '100' });
 
   // ===== 数値state→ローカルstring state同期（syncSettingsFromRoom対応） =====
   useEffect(() => { setLocalTeamCount(String(teamCount)); }, [teamCount]);
@@ -344,6 +350,14 @@ const App = () => {
   useEffect(() => { setLocalRangeProb(String(config.rangeProb)); }, [config.rangeProb]);
   useEffect(() => { setLocalDiceMinCount(String(diceConfig.minCount)); }, [diceConfig.minCount]);
   useEffect(() => { setLocalDiceMaxCount(String(diceConfig.maxCount)); }, [diceConfig.maxCount]);
+  // reviveEventsが変わった時（追加/削除）にローカルstateも同期
+  useEffect(() => {
+    setReviveTurnInputs(prev => {
+      const next: Record<number, string> = {};
+      reviveEvents.forEach(r => { next[r.id] = prev[r.id] !== undefined ? prev[r.id] : String(r.turn); });
+      return next;
+    });
+  }, [reviveEvents.map(r => r.id).join(',')]);
   useEffect(() => { setLocalDiceFaceMin(String(diceConfig.faceMin)); }, [diceConfig.faceMin]);
   useEffect(() => { setLocalDiceFaceMax(String(diceConfig.faceMax)); }, [diceConfig.faceMax]);
 
@@ -414,6 +428,8 @@ const App = () => {
       else { setDiceConfig({ minCount: s.diceConfig.diceCount||2, maxCount: s.diceConfig.diceCount||2, faceMin: s.diceConfig.min||1, faceMax: s.diceConfig.max||100 }); }
     } setEnabledFormats(s.enabledFormats);
     setConfig(s.config); setReviveEvents(s.reviveEvents);
+    if (s.isBarrierEventEnabled !== undefined) setIsBarrierEventEnabled(s.isBarrierEventEnabled);
+    if (s.isSpecialMultiEnabled !== undefined) setIsSpecialMultiEnabled(s.isSpecialMultiEnabled);
   };
 
   const toggleSpecialEvent = (type: string) =>
@@ -529,6 +545,7 @@ const App = () => {
   const spinRoulette = async () => {
     if (isSpinning) return;
     if (isMultiplayer && myUid !== roomHostId) return;
+    if (isSpectatorMode) return; // 観戦モード中はスピン不可
 
     const alivePlayers = players.filter(p => p.status === 'alive');
     const deadPlayers  = players.filter(p => p.status === 'dead');
@@ -555,6 +572,7 @@ const App = () => {
     let isInstantDeath = false, isReverseHealDamage = false, isTrueRandom = false;
     let isDice = false, isNumberFmt = false;
     let localNumberFmt = 'default';
+    let isBarrierGift = false; // 無敵バリアカード付与イベント
 
     const isSpecialActive = isSpecialEventEnabled
       && Math.random() < (specialEventProb / 100)
@@ -571,19 +589,41 @@ const App = () => {
       if (enabledSpecialEvents.includes('instantDeath'))      logicPool.push('instantDeath');
       if (enabledSpecialEvents.includes('trueRandom'))        logicPool.push('trueRandom');
       if (enabledSpecialEvents.includes('numberFormat') && enabledFormats.length > 0) logicPool.push('numberFormat');
+      if (isBarrierEventEnabled)                              logicPool.push('barrierGift');
 
-      if (logicPool.length > 0) {
-        const choice = logicPool[Math.floor(Math.random() * logicPool.length)];
+      // 重複発動モード：確率を満たすごとに最大3個まで選択（互いに競合しない組み合わせ）
+      const applyEvent = (choice: string) => {
         if (choice === 'reverse')          { isReverse = true; }
         else if (choice === 'multi')       { isMulti = true; }
         else if (choice === 'feint')       { isFeint = true; }
         else if (choice === 'dice')        { isDice = true; }
-        else if (choice === 'reverseHealDamage') { isReverseHealDamage = true; effectType = effectType === 'heal' ? 'damage' : 'heal'; }
+        else if (choice === 'reverseHealDamage' && !isInstantDeath) { isReverseHealDamage = true; effectType = effectType === 'heal' ? 'damage' : 'heal'; }
         else if (choice === 'instantDeath')      { isInstantDeath = true; effectType = 'damage'; }
         else if (choice === 'trueRandom')        { isTrueRandom = true; }
         else if (choice === 'numberFormat') {
           isNumberFmt = true;
           localNumberFmt = enabledFormats[Math.floor(Math.random() * enabledFormats.length)];
+        }
+        else if (choice === 'barrierGift') { isBarrierGift = true; }
+      };
+
+      if (logicPool.length > 0) {
+        const usedChoices = new Set<string>();
+        // 1回目（必ず選択）
+        const choice1 = logicPool[Math.floor(Math.random() * logicPool.length)];
+        applyEvent(choice1); usedChoices.add(choice1);
+
+        // 重複発動モードON時：追加で最大2回チャンス（それぞれ発生確率で判定）
+        if (isSpecialMultiEnabled) {
+          const remaining = logicPool.filter(e => !usedChoices.has(e));
+          if (remaining.length > 0 && Math.random() < (specialEventProb / 100)) {
+            const choice2 = remaining[Math.floor(Math.random() * remaining.length)];
+            applyEvent(choice2); usedChoices.add(choice2);
+            const remaining2 = remaining.filter(e => !usedChoices.has(e));
+            if (remaining2.length > 0 && Math.random() < (specialEventProb / 100)) {
+              applyEvent(remaining2[Math.floor(Math.random() * remaining2.length)]);
+            }
+          }
         }
       }
     }
@@ -613,6 +653,8 @@ const App = () => {
         setDisplayResult({ player: `コピー元: ${randomAlive.name}`, amount: 'COPY' });
       } else if (isInstantDeath) {
         setDisplayResult({ player: `【即死】${nameDisp}`, amount: 'DEATH' });
+      } else if (isBarrierGift) {
+        setDisplayResult({ player: `🛡️ ${nameDisp}`, amount: 'BARRIER+1' });
       } else if (isDice && diceResult) {
         const prefix = isReverse ? '【以外】' : (isMulti ? '【複数】' : '');
         // スピン中はランダムなダイス値をアニメーション表示
@@ -636,7 +678,7 @@ const App = () => {
             isReverse, isMulti, weightedPlayers,
             isFeint, isInstantDeath, isReverseHealDamage,
             isDice, diceResult,
-            localNumberFmt
+            localNumberFmt, isBarrierGift
           );
         }
       }
@@ -662,7 +704,8 @@ const App = () => {
     isReverseHealDamage: boolean,
     isDice: boolean,
     diceResult: { rolls: number[]; total: number; faceMax: number } | null,
-    fmt: string
+    fmt: string,
+    isBarrierGift: boolean = false
   ) => {
     let chosenPlayer = selectWeightedPlayer(weightedPlayers);
     let reviveTarget: Player | undefined;
@@ -670,6 +713,37 @@ const App = () => {
     let updatedPlayers = [...players];
     let customLogData: Partial<LogEntry> | null = null;
     let targetIds: string[] = [];
+
+    // ===== 無敵バリアカード付与イベント =====
+    if (isBarrierGift) {
+      updatedPlayers = updatedPlayers.map(p =>
+        p.id === chosenPlayer.id ? { ...p, barriers: (p.barriers || 0) + 1 } : p
+      );
+      await updateDisplayResultMulti({ player: `🛡️ ${chosenPlayer.name}`, amount: 'BARRIER+1' });
+      customLogData = { type: 'system', message: `${chosenPlayer.name}が無敵バリアカードを入手！(${(chosenPlayer.barriers||0)+1}枚)`, target: chosenPlayer.name, amount: 'BARRIER+1' };
+      targetIds = [chosenPlayer.id];
+      finalAmount = 0;
+      if (isMultiplayer && currentRoomId) {
+        try {
+          await API.patchRoom(currentRoomId, {
+            players: updatedPlayers,
+            'gameState.turn': turn + 1,
+            'gameState.logs': [{ id: Date.now(), turn, type: 'system', message: customLogData.message, target: chosenPlayer.name, amount: 'BARRIER+1' }, ...logs].slice(0, 100),
+            'gameState.eliminated': eliminated,
+            'gameState.isSpinning': false,
+            'gameState.displayResult': { player: `🛡️ ${chosenPlayer.name}`, amount: 'BARRIER+1' },
+            'gameState.lastResult': { player: chosenPlayer.name, targetIds, amount: 'BARRIER+1', type: 'barrier', isReverse: false, isMulti: false },
+          });
+          setIsSpinning(false);
+        } catch { setIsSpinning(false); }
+      } else {
+        setPlayers(updatedPlayers);
+        setLastResult({ player: chosenPlayer.name, targetIds, amount: 'BARRIER+1', type: 'barrier', isReverse: false, isMulti: false });
+        setLogs(prev => [{ id: Date.now(), turn, type: 'system', message: customLogData!.message||'', target: chosenPlayer.name, amount: 'BARRIER+1' }, ...prev]);
+        setTimeout(() => { setIsSpinning(false); setTurn(t => t + 1); }, 1500);
+      }
+      return;
+    }
 
     // フェイント
     if (isFeint) {
@@ -713,10 +787,18 @@ const App = () => {
       }
     } else if (isInstantDeath) {
       targetIds = [chosenPlayer.id];
-      updatedPlayers = updatedPlayers.map(p => targetIds.includes(p.id) ? { ...p, hp: 0 } : p);
-      await updateDisplayResultMulti({ player: displayPlayerName, amount: 'DEATH' });
-      customLogData = { type: 'damage', message: `【脱落イベント】${chosenPlayer.name}が即死！`, amount: 'DEATH', target: chosenPlayer.name };
-      finalAmount = 'DEATH';
+      if ((chosenPlayer.barriers||0) > 0) {
+        // バリアで即死を防ぐ
+        updatedPlayers = updatedPlayers.map(p => p.id === chosenPlayer.id ? { ...p, barriers: (p.barriers||1) - 1 } : p);
+        await updateDisplayResultMulti({ player: `🛡️ ${displayPlayerName}`, amount: 'BLOCK!' });
+        customLogData = { type: 'system', message: `${chosenPlayer.name}がバリアで即死をブロック！(残${(chosenPlayer.barriers||1)-1}枚)`, amount: 'BLOCK!', target: chosenPlayer.name };
+        finalAmount = 0;
+      } else {
+        updatedPlayers = updatedPlayers.map(p => targetIds.includes(p.id) ? { ...p, hp: 0 } : p);
+        await updateDisplayResultMulti({ player: displayPlayerName, amount: 'DEATH' });
+        customLogData = { type: 'damage', message: `【脱落イベント】${chosenPlayer.name}が即死！`, amount: 'DEATH', target: chosenPlayer.name };
+        finalAmount = 'DEATH';
+      }
     } else {
       // ===== ダイスルーレット =====
       let diceRolls: number[] | null = null;
@@ -735,12 +817,21 @@ const App = () => {
       const amountForLog = finalAmount as number;
 
       if (isReverse) {
+        // リバース：バリア持ちはバリア消費でダメージ無効
         targetIds = alivePlayers.filter(p => p.id !== chosenPlayer.id).map(p => p.id);
-        updatedPlayers = updatedPlayers.map(p => targetIds.includes(p.id)
-          ? { ...p, hp: Math.max(0, effectType === 'heal' ? p.hp + amountForLog : p.hp - amountForLog) } : p);
+        const barrierBlockedNames: string[] = [];
+        updatedPlayers = updatedPlayers.map(p => {
+          if (!targetIds.includes(p.id)) return p;
+          if (effectType === 'damage' && (p.barriers||0) > 0) {
+            barrierBlockedNames.push(p.name);
+            return { ...p, barriers: (p.barriers||1) - 1 };
+          }
+          return { ...p, hp: Math.max(0, effectType === 'heal' ? p.hp + amountForLog : p.hp - amountForLog) };
+        });
         await updateDisplayResultMulti({ player: `【以外】${displayPlayerName}`, amount: amountForDisplay });
         targetIds = ['SPECIAL'];
-        customLogData = { type: effectType, message: `${chosenPlayer.name}「以外」全員に${amountForLog}${effectType==='heal'?'回復':'ダメージ'}${revMsg}`, amount: amountForLog, target: '複数名' };
+        const barrierNote = barrierBlockedNames.length > 0 ? ` (🛡️${barrierBlockedNames.join(',')}ガード)` : '';
+        customLogData = { type: effectType, message: `${chosenPlayer.name}「以外」全員に${amountForLog}${effectType==='heal'?'回復':'ダメージ'}${revMsg}${barrierNote}`, amount: amountForLog, target: '複数名' };
       } else if (isMulti) {
         const count = Math.max(2, Math.floor(Math.random() * alivePlayers.length) + 1);
         const selected = [...alivePlayers].sort(() => 0.5 - Math.random()).slice(0, count);
@@ -753,17 +844,32 @@ const App = () => {
           await updateDisplayResultMulti({ player: `${tName}に${amountForDisplay}${effectType==='heal'?'回復':'ダメージ'}`, amount: amountForDisplay });
           await new Promise(r => setTimeout(r, 800));
         }
-        updatedPlayers = updatedPlayers.map(p => targetIds.includes(p.id)
-          ? { ...p, hp: Math.max(0, effectType === 'heal' ? p.hp + amountForLog : p.hp - amountForLog) } : p);
+        const barrierBlockedNamesM: string[] = [];
+        updatedPlayers = updatedPlayers.map(p => {
+          if (!targetIds.includes(p.id)) return p;
+          if (effectType === 'damage' && (p.barriers||0) > 0) {
+            barrierBlockedNamesM.push(p.name);
+            return { ...p, barriers: (p.barriers||1) - 1 };
+          }
+          return { ...p, hp: Math.max(0, effectType === 'heal' ? p.hp + amountForLog : p.hp - amountForLog) };
+        });
         await updateDisplayResultMulti({ player: `【複数】${selected.length}名`, amount: amountForDisplay });
         targetIds = ['SPECIAL'];
-        customLogData = { type: effectType, message: `ランダムに選ばれた${selected.length}名に${amountForLog}${effectType==='heal'?'回復':'ダメージ'}${revMsg}`, amount: amountForLog, target: `${selected.length}名` };
+        const barrierNoteM = barrierBlockedNamesM.length > 0 ? ` (🛡️${barrierBlockedNamesM.join(',')}ガード)` : '';
+        customLogData = { type: effectType, message: `ランダムに選ばれた${selected.length}名に${amountForLog}${effectType==='heal'?'回復':'ダメージ'}${revMsg}${barrierNoteM}`, amount: amountForLog, target: `${selected.length}名` };
       } else {
         targetIds = [chosenPlayer.id];
-        updatedPlayers = updatedPlayers.map(p => p.id === chosenPlayer.id
-          ? { ...p, hp: Math.max(0, effectType === 'heal' ? p.hp + amountForLog : p.hp - amountForLog) } : p);
-        await updateDisplayResultMulti({ player: displayPlayerName, amount: amountForDisplay });
-        customLogData = { type: effectType, message: `${chosenPlayer.name}に${amountForLog}${effectType==='heal'?'回復':'ダメージ'}${revMsg}`, amount: amountForLog, target: chosenPlayer.name };
+        // バリアカード：ダメージを無効化してバリアを1枚消費
+        if (effectType === 'damage' && (chosenPlayer.barriers||0) > 0) {
+          updatedPlayers = updatedPlayers.map(p => p.id === chosenPlayer.id ? { ...p, barriers: (p.barriers||1) - 1 } : p);
+          await updateDisplayResultMulti({ player: `🛡️ ${displayPlayerName}`, amount: 'BLOCK!' });
+          customLogData = { type: 'system', message: `${chosenPlayer.name}がバリアでダメージをブロック！(残${(chosenPlayer.barriers||1)-1}枚)`, amount: 'BLOCK!', target: chosenPlayer.name };
+        } else {
+          updatedPlayers = updatedPlayers.map(p => p.id === chosenPlayer.id
+            ? { ...p, hp: Math.max(0, effectType === 'heal' ? p.hp + amountForLog : p.hp - amountForLog) } : p);
+          await updateDisplayResultMulti({ player: displayPlayerName, amount: amountForDisplay });
+          customLogData = { type: effectType, message: `${chosenPlayer.name}に${amountForLog}${effectType==='heal'?'回復':'ダメージ'}${revMsg}`, amount: amountForLog, target: chosenPlayer.name };
+        }
       }
       finalAmount = amountForLog;
     }
@@ -894,6 +1000,7 @@ const App = () => {
     if (reviveEvents.length >= 5) return;
     const newId = reviveEvents.length > 0 ? Math.max(...reviveEvents.map(r => r.id)) + 1 : 1;
     setReviveEvents([...reviveEvents, { id: newId, turn: 50, type: 'steal' }]);
+    setReviveTurnInputs(prev => ({ ...prev, [newId]: '50' }));
   };
   const removeReviveEvent = (id: number) => setReviveEvents(reviveEvents.filter(r => r.id !== id));
   const updateReviveEventState = (id: number, field: string, val: string) =>
@@ -920,7 +1027,8 @@ const App = () => {
         hostId: myUid, status: 'joining', roomId,
         settings: { title, mode, teamCount, teamNames, initialHP, spinDuration, healInterval,
           isHpBalanceEnabled, isSpecialEventEnabled, specialEventProb, enabledSpecialEvents,
-          diceConfig, enabledFormats, config, reviveEvents },
+          diceConfig, enabledFormats, config, reviveEvents,
+          isBarrierEventEnabled, isSpecialMultiEnabled },
         players: [],
         gameState: { turn: 1, logs: [], eliminated: [], isSpinning: false,
           displayResult: { player: '\uff1f\uff1f\uff1f', amount: '\uff1f' }, lastResult: null }
@@ -1332,6 +1440,16 @@ const App = () => {
                           </div>
                         ))}
                       </div>
+                      {/* 無敵バリアカードイベント */}
+                      <button onClick={() => setIsBarrierEventEnabled(!isBarrierEventEnabled)} className={`w-full p-2.5 rounded-xl border flex items-center justify-between transition-all ${isBarrierEventEnabled ? 'bg-cyan-600/20 border-cyan-500/50 text-cyan-100' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>
+                        <span className="text-[9px] font-bold flex items-center gap-2">🛡️ 無敵バリアカード付与</span>
+                        <div className={`w-2 h-2 rounded-full ${isBarrierEventEnabled ? 'bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.6)]' : 'bg-slate-700'}`}/>
+                      </button>
+                      {/* 特別イベント重複発動 */}
+                      <button onClick={() => setIsSpecialMultiEnabled(!isSpecialMultiEnabled)} className={`w-full p-2.5 rounded-xl border flex items-center justify-between transition-all ${isSpecialMultiEnabled ? 'bg-amber-600/20 border-amber-500/50 text-amber-100' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>
+                        <span className="text-[9px] font-bold flex items-center gap-2"><Zap size={10}/> イベント重複発動 (低確率)</span>
+                        <div className={`w-2 h-2 rounded-full ${isSpecialMultiEnabled ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.6)]' : 'bg-slate-700'}`}/>
+                      </button>
                     </div>
                   )}
                   {!isMultiplayer && (
@@ -1424,7 +1542,11 @@ const App = () => {
                   </div>
                   {reviveEvents.map(rev => (
                     <div key={rev.id} className="p-3 bg-slate-950 rounded-2xl border border-purple-900/30 flex items-center gap-2">
-                      <input type="number" value={rev.turn} onChange={e => updateReviveEventState(rev.id, 'turn', e.target.value)} onBlur={e => updateReviveEventState(rev.id, 'turn', e.target.value)} onKeyDown={e => { if(e.key==='Enter'){ (e.target as HTMLInputElement).blur(); } }} className="w-14 bg-slate-900 p-2 rounded-xl text-center font-black text-xs border border-slate-800 text-purple-400"/>
+                      <input type="number" value={reviveTurnInputs[rev.id] ?? String(rev.turn)}
+                        onChange={e => setReviveTurnInputs(prev => ({ ...prev, [rev.id]: e.target.value }))}
+                        onBlur={e => { const v = Math.max(1, parseInt(e.target.value) || 1); updateReviveEventState(rev.id, 'turn', String(v)); setReviveTurnInputs(prev => ({ ...prev, [rev.id]: String(v) })); }}
+                        onKeyDown={e => { if (e.key === 'Enter') { const v = Math.max(1, parseInt((e.target as HTMLInputElement).value) || 1); updateReviveEventState(rev.id, 'turn', String(v)); setReviveTurnInputs(prev => ({ ...prev, [rev.id]: String(v) })); (e.target as HTMLInputElement).blur(); } }}
+                        className="w-14 bg-slate-900 p-2 rounded-xl text-center font-black text-xs border border-slate-800 text-purple-400"/>
                       <div className="flex-1 flex gap-1">
                         {(['steal','copy'] as const).map(t => (
                           <button key={t} onClick={() => updateReviveEventState(rev.id, 'type', t)} className={`flex-1 py-1.5 rounded-lg text-[8px] font-bold ${rev.type===t ? 'bg-purple-600 text-white' : 'bg-slate-900 text-slate-600'}`}>{t==='steal' ? '奪う' : 'コピー'}</button>
@@ -1580,9 +1702,20 @@ const App = () => {
                 </button>
               </div>
             ) : (
-              <button onClick={spinRoulette} disabled={isSpinning || (isMultiplayer && !isHost)} className={`w-full py-6 rounded-[2rem] font-black text-2xl shadow-2xl transition-all active:scale-95 border-b-[10px] flex items-center justify-center gap-4 ${isSpinning || (isMultiplayer && !isHost) ? 'bg-slate-800 border-slate-950 text-slate-600' : isReviveTurn ? 'bg-purple-600 border-purple-900 text-white' : isHealTurn ? 'bg-emerald-600 border-emerald-900 text-white' : 'bg-red-600 border-red-900 text-white hover:brightness-110'} ${isMultiplayer && !isHost ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                {isSpinning ? <RotateCcw className="animate-spin"/> : isMultiplayer && !isHost ? 'WAITING FOR HOST' : 'SPIN'}
-              </button>
+              <div className="space-y-3 w-full">
+                {/* 観戦モードトグル（マルチ・ホストのみ表示） */}
+                {isMultiplayer && isHost && (
+                  <button
+                    onClick={() => setIsSpectatorMode(v => !v)}
+                    className={`w-full py-2.5 rounded-2xl font-black text-sm transition-all flex items-center justify-center gap-2 border ${isSpectatorMode ? 'bg-indigo-900/40 border-indigo-500/60 text-indigo-300' : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:border-slate-500'}`}>
+                    <span className="text-base">{isSpectatorMode ? '👁️' : '🎮'}</span>
+                    {isSpectatorMode ? '観戦中 (SPECTATOR MODE)' : '観戦モード OFF'}
+                  </button>
+                )}
+                <button onClick={spinRoulette} disabled={isSpinning || (isMultiplayer && !isHost) || isSpectatorMode} className={`w-full py-6 rounded-[2rem] font-black text-2xl shadow-2xl transition-all active:scale-95 border-b-[10px] flex items-center justify-center gap-4 ${isSpinning || (isMultiplayer && !isHost) || isSpectatorMode ? 'bg-slate-800 border-slate-950 text-slate-600' : isReviveTurn ? 'bg-purple-600 border-purple-900 text-white' : isHealTurn ? 'bg-emerald-600 border-emerald-900 text-white' : 'bg-red-600 border-red-900 text-white hover:brightness-110'} ${(isMultiplayer && !isHost) || isSpectatorMode ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                  {isSpinning ? <RotateCcw className="animate-spin"/> : isSpectatorMode ? '👁️ SPECTATING' : isMultiplayer && !isHost ? 'WAITING FOR HOST' : 'SPIN'}
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -1630,7 +1763,15 @@ const App = () => {
                       {lowHp && <ShieldAlert size={14} className="text-red-500 shrink-0"/>}
                       <span className={`font-bold text-sm truncate italic ${p.teamColor || 'text-slate-200'}`}>{p.team ? `[${p.team}] ` : ''}{p.name}</span>
                     </div>
-                    <span className={`text-lg font-black tabular-nums ${lowHp ? 'text-red-500' : 'text-emerald-400'}`}>{p.hp}</span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {(p.barriers||0) > 0 && (
+                        <div className="flex items-center gap-0.5 bg-cyan-900/40 border border-cyan-500/40 rounded-lg px-1.5 py-0.5">
+                          <span className="text-[10px]">🛡️</span>
+                          <span className="text-[10px] font-black text-cyan-400 tabular-nums">×{p.barriers}</span>
+                        </div>
+                      )}
+                      <span className={`text-lg font-black tabular-nums ${lowHp ? 'text-red-500' : 'text-emerald-400'}`}>{p.hp}</span>
+                    </div>
                   </div>
                   {isHpBalanceEnabled && (
                     <div className="flex items-center gap-2">
