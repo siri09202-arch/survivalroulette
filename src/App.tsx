@@ -386,6 +386,14 @@ const App = () => {
           setPhase(prev => prev !== 'result' ? 'result' : prev);
           setPlayers(data.players); setLogs(data.gameState.logs); setEliminated(data.gameState.eliminated);
         }
+        // オーナー退室 → 全員強制終了
+        if (data.status === 'closed') {
+          alert('ホストがゲームを終了しました。');
+          setPhase('home'); setIsMultiplayer(false); setCurrentRoomId(null); setRoomHostId(null);
+          setPlayers([]); setEliminated([]); setLogs([]); setTurn(1);
+          setDisplayResult({ player: '？？？', amount: '？' }); setLastResult(null);
+          setIsSpectatorMode(false);
+        }
       } catch {}
     };
     poll();
@@ -960,11 +968,27 @@ const App = () => {
     return [...alive, ...dead];
   };
 
-  const backToHome = () => {
+  const backToHome = async () => {
+    // マルチ中は退室処理をKVに反映
+    if (isMultiplayer && currentRoomId) {
+      try {
+        const data = await API.getRoom(currentRoomId);
+        if (data) {
+          if (data.hostId === myUid) {
+            // オーナーが抜ける → ルームをclosedに
+            await API.patchRoom(currentRoomId, { status: 'closed' });
+          } else {
+            // 参加者が抜ける → playersから自分を除外
+            const updated = (data.players || []).filter((p: Player) => p.uid !== myUid);
+            await API.patchRoom(currentRoomId, { players: updated });
+          }
+        }
+      } catch {}
+    }
     setPhase('home'); setIsMultiplayer(false); setCurrentRoomId(null); setRoomHostId(null);
     setPlayers([]); setEliminated([]); setLogs([]); setTurn(1);
     setDisplayResult({ player: '？？？', amount: '？' }); setLastResult(null);
-    setActiveNumberFormat('default');
+    setActiveNumberFormat('default'); setIsSpectatorMode(false);
   };
 
   // ===== 設定関連 =====
@@ -1258,6 +1282,7 @@ const App = () => {
         <div className="bg-slate-900 rounded-[3rem] shadow-2xl border border-slate-800 w-full max-w-4xl p-6 md:p-10 flex flex-col h-[85vh]">
           <div className="text-center mb-6 shrink-0 relative">
             <div className="absolute top-0 left-0 bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-1"><Activity size={12}/> MULTIPLAYER</div>
+            <button onClick={backToHome} className="absolute top-0 right-0 text-slate-500 hover:text-white font-bold text-xs flex items-center gap-1 transition-colors"><RotateCcw size={12}/> 退室</button>
             <h2 className="text-4xl font-black italic tracking-tighter text-white mt-4 md:mt-0 mb-4 uppercase">WAITING LOBBY</h2>
             <div className="inline-flex items-center gap-4 bg-slate-950 border border-slate-800 px-6 py-3 rounded-2xl mx-auto">
               <span className="text-slate-500 font-black text-xs uppercase tracking-widest">Room ID</span>
@@ -1298,16 +1323,53 @@ const App = () => {
               </div>
             )}
           </div>
-          <div className="shrink-0 text-center">
-            {isHost ? (
-              <button onClick={startMultiplayerGame} disabled={players.length < 2} className={`w-full max-w-md mx-auto py-5 rounded-2xl font-black text-2xl transition-all shadow-2xl flex items-center justify-center gap-3 ${players.length >= 2 ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/30' : 'bg-slate-800 text-slate-600 border border-slate-700'}`}>
-                {players.length >= 2 ? <><Play fill="currentColor"/> ゲームスタート</> : '参加者を待っています...'}
-              </button>
-            ) : (
-              <div className="bg-slate-800 border border-slate-700 w-full max-w-md mx-auto py-5 rounded-2xl font-black text-lg text-slate-400 flex items-center justify-center gap-3 animate-pulse">
-                <Clock size={20}/> ホストの開始を待機中...
+          <div className="shrink-0 space-y-3">
+            {isHost && (
+              <div className="flex items-center justify-center gap-3 w-full max-w-md mx-auto">
+                {/* 観戦モード切り替えボタン（ロビー：参加/不参加） */}
+                <button
+                  onClick={async () => {
+                    const next = !isSpectatorMode;
+                    setIsSpectatorMode(next);
+                    if (!currentRoomId) return;
+                    try {
+                      const data = await API.getRoom(currentRoomId);
+                      if (!data) return;
+                      if (next) {
+                        // 観戦モードON → playersからホストを除外
+                        const updated = (data.players || []).filter((p: Player) => p.uid !== myUid);
+                        await API.patchRoom(currentRoomId, { players: updated });
+                      } else {
+                        // 観戦モードOFF → playersにホストを追加（まだいなければ）
+                        if (!(data.players || []).find((p: Player) => p.uid === myUid)) {
+                          const ti = data.settings?.mode === 'team' ? (data.players.length % (data.settings?.teamCount || 2)) : 0;
+                          await API.patchRoom(currentRoomId, { players: [...(data.players || []), {
+                            id: `p-${Date.now()}-${myUid}`, uid: myUid,
+                            name: playerNameInput || 'HOST', hp: initialHP,
+                            status: 'alive', teamIndex: ti,
+                            team: data.settings?.mode === 'team' ? (data.settings?.teamNames?.[ti] || `チーム${String.fromCharCode(65+ti)}`) : null
+                          }] });
+                        }
+                      }
+                    } catch {}
+                  }}
+                  className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all flex items-center justify-center gap-2 border ${isSpectatorMode ? 'bg-indigo-900/40 border-indigo-500/60 text-indigo-300' : 'bg-emerald-900/30 border-emerald-500/50 text-emerald-300'}`}>
+                  <span className="text-base">{isSpectatorMode ? '👁️' : '🎮'}</span>
+                  {isSpectatorMode ? '観戦中（参加しない）' : '参加中（プレイヤー）'}
+                </button>
               </div>
             )}
+            <div className="text-center">
+              {isHost ? (
+                <button onClick={startMultiplayerGame} disabled={players.length < 2} className={`w-full max-w-md mx-auto py-5 rounded-2xl font-black text-2xl transition-all shadow-2xl flex items-center justify-center gap-3 ${players.length >= 2 ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/30' : 'bg-slate-800 text-slate-600 border border-slate-700'}`}>
+                  {players.length >= 2 ? <><Play fill="currentColor"/> ゲームスタート</> : '参加者を待っています...'}
+                </button>
+              ) : (
+                <div className="bg-slate-800 border border-slate-700 w-full max-w-md mx-auto py-5 rounded-2xl font-black text-lg text-slate-400 flex items-center justify-center gap-3 animate-pulse">
+                  <Clock size={20}/> ホストの開始を待機中...
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -1657,9 +1719,16 @@ const App = () => {
               <div className="text-xl font-black italic text-white truncate">{isReviveTurn ? 'SPECIAL EVENT' : isHealTurn ? 'HEALING TIME' : 'BATTLE ROUND'}</div>
             </div>
           </div>
-          <div className="text-right px-5 py-3 bg-slate-950 rounded-2xl border border-slate-800 shrink-0">
-            <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">{nextEvent.name}まで</div>
-            <div className="text-base font-black text-amber-500 italic">{nextEvent.remaining === '-' ? 'CLIMAX' : `${nextEvent.remaining} TURN`}</div>
+          <div className="flex items-center gap-3 shrink-0">
+            {isMultiplayer && (
+              <button onClick={backToHome} className="px-3 py-2 bg-slate-800 hover:bg-red-900/40 border border-slate-700 hover:border-red-700 text-slate-400 hover:text-red-400 rounded-xl font-bold text-xs transition-all flex items-center gap-1">
+                <RotateCcw size={12}/> 退室
+              </button>
+            )}
+            <div className="text-right px-5 py-3 bg-slate-950 rounded-2xl border border-slate-800">
+              <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">{nextEvent.name}まで</div>
+              <div className="text-base font-black text-amber-500 italic">{nextEvent.remaining === '-' ? 'CLIMAX' : `${nextEvent.remaining} TURN`}</div>
+            </div>
           </div>
         </div>
 
@@ -1703,14 +1772,11 @@ const App = () => {
               </div>
             ) : (
               <div className="space-y-3 w-full">
-                {/* 観戦モードトグル（マルチ・ホストのみ表示） */}
-                {isMultiplayer && isHost && (
-                  <button
-                    onClick={() => setIsSpectatorMode(v => !v)}
-                    className={`w-full py-2.5 rounded-2xl font-black text-sm transition-all flex items-center justify-center gap-2 border ${isSpectatorMode ? 'bg-indigo-900/40 border-indigo-500/60 text-indigo-300' : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:border-slate-500'}`}>
-                    <span className="text-base">{isSpectatorMode ? '👁️' : '🎮'}</span>
-                    {isSpectatorMode ? '観戦中 (SPECTATOR MODE)' : '観戦モード OFF'}
-                  </button>
+                {/* 観戦モード表示（ホストが観戦者の場合のみ） */}
+                {isMultiplayer && isHost && isSpectatorMode && (
+                  <div className="w-full py-2 rounded-2xl font-black text-sm flex items-center justify-center gap-2 bg-indigo-900/30 border border-indigo-500/40 text-indigo-300">
+                    <span>👁️</span> 観戦中（プレイヤーとして参加していません）
+                  </div>
                 )}
                 <button onClick={spinRoulette} disabled={isSpinning || (isMultiplayer && !isHost) || isSpectatorMode} className={`w-full py-6 rounded-[2rem] font-black text-2xl shadow-2xl transition-all active:scale-95 border-b-[10px] flex items-center justify-center gap-4 ${isSpinning || (isMultiplayer && !isHost) || isSpectatorMode ? 'bg-slate-800 border-slate-950 text-slate-600' : isReviveTurn ? 'bg-purple-600 border-purple-900 text-white' : isHealTurn ? 'bg-emerald-600 border-emerald-900 text-white' : 'bg-red-600 border-red-900 text-white hover:brightness-110'} ${(isMultiplayer && !isHost) || isSpectatorMode ? 'opacity-50 cursor-not-allowed' : ''}`}>
                   {isSpinning ? <RotateCcw className="animate-spin"/> : isSpectatorMode ? '👁️ SPECTATING' : isMultiplayer && !isHost ? 'WAITING FOR HOST' : 'SPIN'}
