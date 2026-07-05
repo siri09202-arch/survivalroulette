@@ -553,7 +553,6 @@ const App = () => {
   const spinRoulette = async () => {
     if (isSpinning) return;
     if (isMultiplayer && myUid !== roomHostId) return;
-    if (isSpectatorMode) return; // 観戦モード中はスピン不可
 
     const alivePlayers = players.filter(p => p.status === 'alive');
     const deadPlayers  = players.filter(p => p.status === 'dead');
@@ -1778,8 +1777,8 @@ const App = () => {
                     <span>👁️</span> 観戦中（プレイヤーとして参加していません）
                   </div>
                 )}
-                <button onClick={spinRoulette} disabled={isSpinning || (isMultiplayer && !isHost) || isSpectatorMode} className={`w-full py-6 rounded-[2rem] font-black text-2xl shadow-2xl transition-all active:scale-95 border-b-[10px] flex items-center justify-center gap-4 ${isSpinning || (isMultiplayer && !isHost) || isSpectatorMode ? 'bg-slate-800 border-slate-950 text-slate-600' : isReviveTurn ? 'bg-purple-600 border-purple-900 text-white' : isHealTurn ? 'bg-emerald-600 border-emerald-900 text-white' : 'bg-red-600 border-red-900 text-white hover:brightness-110'} ${(isMultiplayer && !isHost) || isSpectatorMode ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                  {isSpinning ? <RotateCcw className="animate-spin"/> : isSpectatorMode ? '👁️ SPECTATING' : isMultiplayer && !isHost ? 'WAITING FOR HOST' : 'SPIN'}
+                <button onClick={spinRoulette} disabled={isSpinning || (isMultiplayer && !isHost)} className={`w-full py-6 rounded-[2rem] font-black text-2xl shadow-2xl transition-all active:scale-95 border-b-[10px] flex items-center justify-center gap-4 ${isSpinning || (isMultiplayer && !isHost) ? 'bg-slate-800 border-slate-950 text-slate-600' : isReviveTurn ? 'bg-purple-600 border-purple-900 text-white' : isHealTurn ? 'bg-emerald-600 border-emerald-900 text-white' : 'bg-red-600 border-red-900 text-white hover:brightness-110'} ${(isMultiplayer && !isHost) ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                  {isSpinning ? <RotateCcw className="animate-spin"/> : isMultiplayer && !isHost ? 'WAITING FOR HOST' : 'SPIN'}
                 </button>
               </div>
             )}
