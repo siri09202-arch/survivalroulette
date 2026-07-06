@@ -1,5 +1,5 @@
-# prod
-dist/
+# prod (GitHub Pages用にdistはpush対象のためコメントアウト)
+# dist/
 
 # dev
 .yarn/
