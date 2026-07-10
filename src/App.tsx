@@ -252,7 +252,38 @@ const App = () => {
   const [isHpBalanceEnabled, setIsHpBalanceEnabled] = useState(true);
   const [isBarrierEventEnabled, setIsBarrierEventEnabled] = useState(true); // 無敵バリアカードイベント
   const [isSpecialMultiEnabled, setIsSpecialMultiEnabled] = useState(false); // 特別イベント重複発動
+  const [specialMultiProb, setSpecialMultiProb] = useState(30); // 重複発動確率（%）
   const [isSpectatorMode, setIsSpectatorMode] = useState(false); // 観戦モード（ホストのみ）
+
+  // ===== マルチイベント用state =====
+  type MultiEventType = 'russian_roulette' | 'bomb' | 'kanji_quiz' | 'math_quiz' | 'english_quiz' | null;
+  const [multiEventPhase, setMultiEventPhase] = useState<MultiEventType>(null);
+  const [multiEventDamage, setMultiEventDamage] = useState(0);
+  const [multiEventTargets, setMultiEventTargets] = useState<Player[]>([]);
+  // ロシアンルーレット
+  const [rrChamber, setRrChamber] = useState(0); // 弾が入っているチャンバー
+  const [rrCurrent, setRrCurrent] = useState(0); // 現在のシリンダー位置
+  const [rrTurnIndex, setRrTurnIndex] = useState(0); // 現在の引き金番
+  const [rrHit, setRrHit] = useState<string[]>([]); // アウトになったプレイヤーID
+  // 時限爆弾
+  const [bombData, setBombData] = useState<{playerId:string;wires:number;cutWire:number;timeLeft:number;status:'active'|'cut'|'exploded'|'wrong'}[]>([]);
+  const [bombInterval, setBombInterval] = useState<ReturnType<typeof setInterval>|null>(null);
+  // クイズ
+  const [quizQuestions, setQuizQuestions] = useState<{q:string;choices:string[];answer:number}[]>([]);
+  const [quizAnswers, setQuizAnswers] = useState<Record<string,number[]>>({}); // playerId -> 各問の回答index
+  const [quizTimeLeft, setQuizTimeLeft] = useState(60);
+  const [quizInterval, setQuizInterval] = useState<ReturnType<typeof setInterval>|null>(null);
+  const [quizLoading, setQuizLoading] = useState(false);
+  const [quizCurrentQ, setQuizCurrentQ] = useState(0); // 自分が今見ている問題番号（0-4）
+  const [myQuizAnswers, setMyQuizAnswers] = useState<(number|null)[]>([null,null,null,null,null]);
+  const [multiEventEnabled, setMultiEventEnabled] = useState({
+    russian_roulette: true,
+    bomb: true,
+    kanji_quiz: true,
+    math_quiz: true,
+    english_quiz: true
+  });
+  const [multiEventProb, setMultiEventProb] = useState(20); // マルチイベント発動確率
 
   // numberFormat は spinRoulette 内でローカル変数として使うため
   // state は「表示バッジ用」のみ
@@ -438,6 +469,9 @@ const App = () => {
     setConfig(s.config); setReviveEvents(s.reviveEvents);
     if (s.isBarrierEventEnabled !== undefined) setIsBarrierEventEnabled(s.isBarrierEventEnabled);
     if (s.isSpecialMultiEnabled !== undefined) setIsSpecialMultiEnabled(s.isSpecialMultiEnabled);
+    if (s.specialMultiProb !== undefined) setSpecialMultiProb(s.specialMultiProb);
+    if (s.multiEventEnabled !== undefined) setMultiEventEnabled(s.multiEventEnabled);
+    if (s.multiEventProb !== undefined) setMultiEventProb(s.multiEventProb);
   };
 
   const toggleSpecialEvent = (type: string) =>
@@ -623,11 +657,11 @@ const App = () => {
         // 重複発動モードON時：追加で最大2回チャンス（それぞれ発生確率で判定）
         if (isSpecialMultiEnabled) {
           const remaining = logicPool.filter(e => !usedChoices.has(e));
-          if (remaining.length > 0 && Math.random() < (specialEventProb / 100)) {
+          if (remaining.length > 0 && Math.random() < (specialMultiProb / 100)) {
             const choice2 = remaining[Math.floor(Math.random() * remaining.length)];
             applyEvent(choice2); usedChoices.add(choice2);
             const remaining2 = remaining.filter(e => !usedChoices.has(e));
-            if (remaining2.length > 0 && Math.random() < (specialEventProb / 100)) {
+            if (remaining2.length > 0 && Math.random() < (specialMultiProb / 100)) {
               applyEvent(remaining2[Math.floor(Math.random() * remaining2.length)]);
             }
           }
@@ -906,6 +940,11 @@ const App = () => {
           ...(isFinished ? { status: 'result' } : {})
         });
         setIsSpinning(false);
+        // マルチイベント発動判定（ダメージターンのみ、ゲーム終了でない場合）
+        if (!isFinished && effectType === 'damage') {
+          const targets = updatedPlayers.filter(p => targetIds.includes(p.id) && p.status === 'alive');
+          setTimeout(() => triggerMultiEvent(finalAmount as number, targets), 500);
+        }
       } catch { setIsSpinning(false); }
     } else {
       setPlayers(updatedPlayers);
@@ -918,6 +957,199 @@ const App = () => {
         const isFinished = mode === 'team' ? new Set(afterAlive.map(p => p.team)).size <= 1 : afterAlive.length <= 1;
         if (isFinished) setPhase('result'); else setTurn(t => t + 1);
       }, 1500);
+    }
+  };
+
+  // ===== マルチイベント: ルーレット結果を元にイベント発動 =====
+  const triggerMultiEvent = (damage: number, targets: Player[]) => {
+    if (!isMultiplayer || !isHost || targets.length === 0) return;
+    const enabled = Object.entries(multiEventEnabled).filter(([,v]) => v).map(([k]) => k);
+    if (enabled.length === 0) return;
+    if (Math.random() * 100 > multiEventProb) return;
+    const chosen = enabled[Math.floor(Math.random() * enabled.length)] as MultiEventType;
+    setMultiEventDamage(damage);
+    setMultiEventTargets(targets);
+    if (chosen === 'russian_roulette') {
+      const chamber = Math.floor(Math.random() * 6); // 0-5
+      setRrChamber(chamber); setRrCurrent(0); setRrTurnIndex(0); setRrHit([]);
+    } else if (chosen === 'bomb') {
+      const data = targets.map(p => ({
+        playerId: p.id,
+        wires: Math.floor(Math.random() * 10) + 1, // 1-10本
+        cutWire: Math.floor(Math.random() * 10),    // 0-9番が正解
+        timeLeft: 60,
+        status: 'active' as const
+      }));
+      setBombData(data);
+      if (bombInterval) clearInterval(bombInterval);
+      const iv = setInterval(() => {
+        setBombData(prev => {
+          const updated = prev.map(b => b.status === 'active' ? {...b, timeLeft: b.timeLeft - 1} : b);
+          const anyExploded = updated.some(b => b.status === 'active' && b.timeLeft <= 0);
+          if (anyExploded) {
+            clearInterval(iv);
+            setBombData(updated.map(b => b.status === 'active' && b.timeLeft <= 0 ? {...b, status: 'exploded'} : b));
+          }
+          return updated;
+        });
+      }, 1000);
+      setBombInterval(iv);
+    } else if (chosen === 'kanji_quiz' || chosen === 'math_quiz' || chosen === 'english_quiz') {
+      setQuizLoading(true); setQuizCurrentQ(0);
+      setMyQuizAnswers([null,null,null,null,null]);
+      setQuizAnswers({});
+      fetchQuizQuestions(chosen).then(qs => {
+        setQuizQuestions(qs); setQuizLoading(false);
+        setQuizTimeLeft(60);
+        if (quizInterval) clearInterval(quizInterval);
+        const iv = setInterval(() => {
+          setQuizTimeLeft(t => {
+            if (t <= 1) { clearInterval(iv); return 0; }
+            return t - 1;
+          });
+        }, 1000);
+        setQuizInterval(iv);
+      });
+    }
+    setMultiEventPhase(chosen);
+  };
+
+  // クイズ問題生成（ビルトイン問題バンク使用）
+  const fetchQuizQuestions = async (type: string): Promise<{q:string;choices:string[];answer:number}[]> => {
+    if (type === 'kanji_quiz') {
+      const bank = [
+        {q:'「薔薇」の読み方は？', choices:['ばら','はな','くさ','うめ'], answer:0},
+        {q:'「鬱」の読み方は？', choices:['うつ','かつ','まつ','ほつ'], answer:0},
+        {q:'「蒲公英」は何の花？', choices:['タンポポ','ひまわり','あさがお','さくら'], answer:0},
+        {q:'「海豚」の読み方は？', choices:['いるか','くじら','さめ','たこ'], answer:0},
+        {q:'「向日葵」の読み方は？', choices:['ひまわり','あさがお','すみれ','もみじ'], answer:0},
+        {q:'「蜻蛉」の読み方は？', choices:['とんぼ','むし','はち','かぶと'], answer:0},
+        {q:'「撫子」の読み方は？', choices:['なでしこ','きく','はす','ふじ'], answer:0},
+        {q:'「鰐」の読み方は？', choices:['わに','へび','かめ','とかげ'], answer:0},
+        {q:'「狸」の読み方は？', choices:['たぬき','きつね','うさぎ','くま'], answer:0},
+        {q:'「蛍」の読み方は？', choices:['ほたる','あり','かに','せみ'], answer:0},
+        {q:'「麒麟」の読み方は？', choices:['きりん','うま','ぞう','らくだ'], answer:0},
+        {q:'「鳳凰」の読み方は？', choices:['ほうおう','えんま','りゅう','とら'], answer:0},
+        {q:'「珊瑚」の読み方は？', choices:['さんご','しんじゅ','たい','かい'], answer:0},
+        {q:'「鷹」の読み方は？', choices:['たか','つる','わし','かも'], answer:0},
+        {q:'「葡萄」の読み方は？', choices:['ぶどう','もも','なし','かき'], answer:0},
+      ];
+      return shuffle(bank).slice(0,5);
+    } else if (type === 'math_quiz') {
+      const qs: {q:string;choices:string[];answer:number}[] = [];
+      for (let i = 0; i < 5; i++) {
+        const a = Math.floor(Math.random()*50)+1;
+        const b = Math.floor(Math.random()*50)+1;
+        const op = ['+','-','×'][Math.floor(Math.random()*3)];
+        const correct = op==='+' ? a+b : op==='-' ? a-b : a*b;
+        const choices = shuffle([correct, correct+(Math.floor(Math.random()*10)+1), correct-(Math.floor(Math.random()*10)+1), correct*2]).slice(0,4).map(String);
+        const answer = choices.indexOf(String(correct));
+        qs.push({q:`${a} ${op} ${b} = ?`, choices, answer});
+      }
+      return qs;
+    } else {
+      const bank = [
+        {q:'「apple」の意味は？', choices:['りんご','みかん','ぶどう','いちご'], answer:0},
+        {q:'「ocean」の意味は？', choices:['海','山','川','湖'], answer:0},
+        {q:'「friend」の意味は？', choices:['友達','敵','先生','親'], answer:0},
+        {q:'「beautiful」の意味は？', choices:['美しい','怖い','悲しい','嬉しい'], answer:0},
+        {q:'「library」の意味は？', choices:['図書館','病院','学校','市場'], answer:0},
+        {q:'「butterfly」の意味は？', choices:['蝶','蜂','蚊','蟻'], answer:0},
+        {q:'「thunder」の意味は？', choices:['雷','風','雨','雪'], answer:0},
+        {q:'「ancient」の意味は？', choices:['古代の','新しい','速い','重い'], answer:0},
+        {q:'「whisper」の意味は？', choices:['囁く','叫ぶ','笑う','泣く'], answer:0},
+        {q:'「journey」の意味は？', choices:['旅','家','夢','歌'], answer:0},
+        {q:'「brave」の意味は？', choices:['勇敢な','臆病な','賢い','強い'], answer:0},
+        {q:'「shadow」の意味は？', choices:['影','光','風','霧'], answer:0},
+        {q:'「treasure」の意味は？', choices:['宝','石','土','草'], answer:0},
+        {q:'「midnight」の意味は？', choices:['真夜中','昼間','夕方','朝'], answer:0},
+        {q:'「rainbow」の意味は？', choices:['虹','星','月','太陽'], answer:0},
+      ];
+      return shuffle(bank).slice(0,5);
+    }
+  };
+  const shuffle = <T,>(arr: T[]): T[] => [...arr].sort(() => Math.random()-0.5);
+
+  // マルチイベント: ダメージ適用（外部から呼ぶ共通関数）
+  const applyMultiEventDamage = async (hitPlayerIds: string[]) => {
+    if (!currentRoomId) return;
+    const updated = players.map(p => hitPlayerIds.includes(p.id)
+      ? {...p, hp: Math.max(0, p.hp - multiEventDamage)}
+      : p
+    ).map(p => p.status==='alive' && p.hp<=0 ? {...p, hp:0, status:'dead' as const} : p);
+    const newDead = updated.filter(p => p.status==='dead' && players.find(op=>op.id===p.id)?.status==='alive');
+    try {
+      await API.patchRoom(currentRoomId, {
+        players: updated,
+        'gameState.logs': [...(newDead.map((d,i) => ({id:Date.now()+i, turn, type:'death', message:`${d.name}が脱落...`, target:d.name}))), ...logs].slice(0,100)
+      });
+    } catch {}
+    setMultiEventPhase(null);
+  };
+
+  // ロシアンルーレット: 引き金を引く
+  const pullTrigger = () => {
+    if (rrTurnIndex >= multiEventTargets.length) return;
+    const current = rrCurrent;
+    const fired = current === rrChamber;
+    const target = multiEventTargets[rrTurnIndex];
+    const nextCurrent = (current + 1) % 6;
+    setRrCurrent(nextCurrent);
+    if (fired) {
+      setRrHit(prev => [...prev, target.id]);
+    }
+    if (rrTurnIndex + 1 >= multiEventTargets.length) {
+      // 全員が引いた
+      const hits = fired ? [...rrHit, target.id] : [...rrHit];
+      setTimeout(() => applyMultiEventDamage(hits), 1200);
+    } else {
+      setRrTurnIndex(prev => prev + 1);
+    }
+  };
+
+  // 爆弾: ワイヤーを切る
+  const cutWire = (playerId: string, wireIndex: number) => {
+    setBombData(prev => prev.map(b => {
+      if (b.playerId !== playerId || b.status !== 'active') return b;
+      if (wireIndex === b.cutWire) {
+        return {...b, status: 'cut' as const};
+      } else {
+        if (bombInterval) clearInterval(bombInterval);
+        return {...b, status: 'wrong' as const};
+      }
+    }));
+  };
+
+  // 爆弾: 結果確定
+  const finalizeBomb = () => {
+    if (bombInterval) { clearInterval(bombInterval); setBombInterval(null); }
+    const failedIds = bombData
+      .filter(b => b.status === 'exploded' || b.status === 'wrong')
+      .map(b => b.playerId);
+    applyMultiEventDamage(failedIds);
+  };
+
+  // クイズ: 回答を記録
+  const answerQuiz = (qIndex: number, choiceIndex: number) => {
+    setMyQuizAnswers(prev => { const n = [...prev]; n[qIndex] = choiceIndex; return n; });
+    if (qIndex < 4) setQuizCurrentQ(qIndex + 1);
+  };
+
+  // クイズ: 提出
+  const submitQuiz = () => {
+    if (quizInterval) { clearInterval(quizInterval); setQuizInterval(null); }
+    const myId = players.find(p => p.uid === myUid)?.id || '';
+    const newAnswers = {...quizAnswers, [myId]: myQuizAnswers.map(a => a ?? -1)};
+    setQuizAnswers(newAnswers);
+    // 全員提出済み or ホストが強制終了
+    const allDone = multiEventTargets.every(p => newAnswers[p.id]);
+    if (allDone || isHost) {
+      const failedIds = multiEventTargets.filter(p => {
+        const ans = newAnswers[p.id];
+        if (!ans) return true; // 未回答はアウト
+        return !quizQuestions.every((q, i) => ans[i] === q.answer);
+      }).map(p => p.id);
+      applyMultiEventDamage(failedIds);
     }
   };
 
@@ -1051,7 +1283,8 @@ const App = () => {
         settings: { title, mode, teamCount, teamNames, initialHP, spinDuration, healInterval,
           isHpBalanceEnabled, isSpecialEventEnabled, specialEventProb, enabledSpecialEvents,
           diceConfig, enabledFormats, config, reviveEvents,
-          isBarrierEventEnabled, isSpecialMultiEnabled },
+          isBarrierEventEnabled, isSpecialMultiEnabled, specialMultiProb,
+          multiEventEnabled, multiEventProb },
         players: [],
         gameState: { turn: 1, logs: [], eliminated: [], isSpinning: false,
           displayResult: { player: '\uff1f\uff1f\uff1f', amount: '\uff1f' }, lastResult: null }
@@ -1507,10 +1740,17 @@ const App = () => {
                         <div className={`w-2 h-2 rounded-full ${isBarrierEventEnabled ? 'bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.6)]' : 'bg-slate-700'}`}/>
                       </button>
                       {/* 特別イベント重複発動 */}
-                      <button onClick={() => setIsSpecialMultiEnabled(!isSpecialMultiEnabled)} className={`w-full p-2.5 rounded-xl border flex items-center justify-between transition-all ${isSpecialMultiEnabled ? 'bg-amber-600/20 border-amber-500/50 text-amber-100' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>
-                        <span className="text-[9px] font-bold flex items-center gap-2"><Zap size={10}/> イベント重複発動 (低確率)</span>
+                      <button onClick={() => setIsSpecialMultiEnabled(!isSpecialMultiEnabled)} className={`w-full p-2.5 rounded-xl border flex items-center justify-between transition-all ${isSpecialMultiEnabled ? 'bg-amber-600/20 border-amber-500/50 text-amber-100 rounded-b-none border-b-0' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>
+                        <span className="text-[9px] font-bold flex items-center gap-2"><Zap size={10}/> イベント重複発動</span>
                         <div className={`w-2 h-2 rounded-full ${isSpecialMultiEnabled ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.6)]' : 'bg-slate-700'}`}/>
                       </button>
+                      {isSpecialMultiEnabled && (
+                        <div className="bg-amber-950/30 border border-amber-500/30 border-t-0 rounded-b-xl px-3 py-2 flex items-center gap-2">
+                          <span className="text-[9px] text-amber-400 font-bold">重複確率</span>
+                          <input type="number" min={1} max={100} value={specialMultiProb} onChange={e => setSpecialMultiProb(Math.max(1,Math.min(100,parseInt(e.target.value)||1)))} className="w-12 bg-slate-900 border border-amber-500/40 rounded-lg text-center text-[10px] font-black text-amber-300 outline-none px-1 py-0.5"/>
+                          <span className="text-[9px] text-amber-500 font-bold">%</span>
+                        </div>
+                      )}
                     </div>
                   )}
                   {!isMultiplayer && (
@@ -1518,6 +1758,32 @@ const App = () => {
                       <span className="text-[10px] font-black uppercase tracking-widest flex items-center gap-2"><Hand size={14}/> 手動選択 (41-60T)</span>
                       <div className={`px-2 py-0.5 rounded text-[8px] font-black ${isManualModeEnabled ? 'bg-amber-600' : 'bg-slate-800'}`}>{isManualModeEnabled ? 'ON' : 'OFF'}</div>
                     </button>
+                  )}
+                  {/* マルチプレイ専用イベント設定 */}
+                  {isMultiplayer && isHost && (
+                    <div className="mt-2 p-3 bg-slate-950 rounded-2xl border border-rose-500/30 space-y-2">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[9px] font-black text-rose-400 uppercase tracking-widest">🎲 マルチイベント</span>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[8px] text-slate-500">発動率</span>
+                          <input type="number" min={1} max={100} value={multiEventProb} onChange={e => setMultiEventProb(Math.max(1,Math.min(100,parseInt(e.target.value)||1)))} className="w-10 bg-slate-900 border border-rose-500/30 rounded-lg text-center text-[10px] font-black text-rose-300 outline-none px-1 py-0.5"/>
+                          <span className="text-[8px] text-slate-500">%</span>
+                        </div>
+                      </div>
+                      {([
+                        {key:'russian_roulette', icon:'🔫', label:'ロシアンルーレット'},
+                        {key:'bomb',             icon:'💣', label:'時限爆弾解除'},
+                        {key:'kanji_quiz',       icon:'漢', label:'漢字クイズ'},
+                        {key:'math_quiz',        icon:'➕', label:'計算クイズ'},
+                        {key:'english_quiz',     icon:'🔤', label:'英単語クイズ'},
+                      ] as const).map(ev => (
+                        <button key={ev.key} onClick={() => setMultiEventEnabled(prev => ({...prev, [ev.key]: !prev[ev.key]}))}
+                          className={`w-full px-3 py-2 rounded-xl border flex items-center justify-between transition-all text-[9px] font-bold ${multiEventEnabled[ev.key] ? 'bg-rose-900/20 border-rose-500/40 text-rose-200' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>
+                          <span className="flex items-center gap-2">{ev.icon} {ev.label}</span>
+                          <div className={`w-2 h-2 rounded-full ${multiEventEnabled[ev.key] ? 'bg-rose-400 shadow-[0_0_6px_rgba(251,113,133,0.6)]' : 'bg-slate-700'}`}/>
+                        </button>
+                      ))}
+                    </div>
                   )}
                 </div>
               </div>
@@ -1869,6 +2135,151 @@ const App = () => {
         .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
         [draggable="true"] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
       `}}/>
+
+      {/* ===== マルチイベント モーダル ===== */}
+      {multiEventPhase && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-lg bg-slate-900 rounded-[2rem] border border-slate-700 shadow-2xl overflow-hidden">
+
+            {/* ロシアンルーレット */}
+            {multiEventPhase === 'russian_roulette' && (
+              <div className="p-6 space-y-5">
+                <div className="text-center">
+                  <div className="text-4xl mb-2">🔫</div>
+                  <h2 className="text-2xl font-black text-white">ロシアンルーレット</h2>
+                  <p className="text-slate-400 text-sm mt-1">アウトになったらダメージ <span className="text-red-400 font-black">{multiEventDamage}</span></p>
+                </div>
+                <div className="flex justify-center gap-2 my-4">
+                  {Array.from({length:6}).map((_,i) => (
+                    <div key={i} className={`w-10 h-10 rounded-full border-2 flex items-center justify-center text-lg font-black transition-all ${i < rrCurrent ? 'bg-slate-800 border-slate-700 text-slate-600' : i === rrCurrent ? 'bg-red-600 border-red-400 text-white animate-pulse' : 'bg-slate-950 border-slate-700 text-slate-500'}`}>
+                      {i < rrCurrent ? '○' : i === rrCurrent ? '→' : '·'}
+                    </div>
+                  ))}
+                </div>
+                <div className="space-y-2">
+                  {multiEventTargets.map((p, i) => {
+                    const isMyTurn = i === rrTurnIndex;
+                    const isOut = rrHit.includes(p.id);
+                    const done = i < rrTurnIndex || isOut;
+                    return (
+                      <div key={p.id} className={`flex items-center gap-3 p-3 rounded-xl border ${isMyTurn ? 'bg-red-900/20 border-red-500 animate-pulse' : done ? 'bg-slate-800/50 border-slate-700' : 'bg-slate-950 border-slate-800'}`}>
+                        <span className="font-bold text-sm flex-1">{p.name}</span>
+                        {isOut && <span className="text-red-400 font-black text-xs">💥 アウト</span>}
+                        {done && !isOut && <span className="text-emerald-400 font-black text-xs">✓ セーフ</span>}
+                        {isMyTurn && isHost && (
+                          <button onClick={pullTrigger} className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white font-black text-sm rounded-xl transition-all active:scale-95">
+                            🔫 引く
+                          </button>
+                        )}
+                        {isMyTurn && !isHost && <span className="text-amber-400 text-xs font-bold animate-pulse">ホスト待機中...</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+                {rrTurnIndex >= multiEventTargets.length && (
+                  <button onClick={() => applyMultiEventDamage(rrHit)} className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-black rounded-xl transition-all">結果確定</button>
+                )}
+              </div>
+            )}
+
+            {/* 時限爆弾 */}
+            {multiEventPhase === 'bomb' && (
+              <div className="p-6 space-y-4">
+                <div className="text-center">
+                  <div className="text-4xl mb-2">💣</div>
+                  <h2 className="text-2xl font-black text-white">時限爆弾解除チャレンジ</h2>
+                  <p className="text-slate-400 text-sm mt-1">爆発したらダメージ <span className="text-red-400 font-black">{multiEventDamage}</span></p>
+                </div>
+                <div className="space-y-4 max-h-80 overflow-y-auto custom-scrollbar">
+                  {bombData.map(b => {
+                    const player = multiEventTargets.find(p => p.id === b.playerId);
+                    const isMe = player?.uid === myUid;
+                    return (
+                      <div key={b.playerId} className={`p-4 rounded-xl border ${b.status==='cut' ? 'bg-emerald-900/20 border-emerald-500' : b.status==='exploded' || b.status==='wrong' ? 'bg-red-900/20 border-red-500' : 'bg-slate-950 border-slate-700'}`}>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="font-black text-sm">{player?.name}</span>
+                          <div className={`text-sm font-black ${b.timeLeft <= 10 ? 'text-red-400 animate-pulse' : 'text-amber-400'}`}>⏱ {b.timeLeft}s</div>
+                        </div>
+                        {b.status === 'active' && (
+                          <>
+                            <p className="text-[10px] text-slate-400 mb-2">{b.wires}本の導線。正しい1本を切れ！</p>
+                            {isMe ? (
+                              <div className="flex flex-wrap gap-2">
+                                {Array.from({length: b.wires}).map((_,i) => (
+                                  <button key={i} onClick={() => cutWire(b.playerId, i)} className={`px-3 py-1.5 rounded-lg font-black text-xs border transition-all ${['bg-red-600 border-red-800','bg-blue-600 border-blue-800','bg-emerald-600 border-emerald-800','bg-amber-500 border-amber-700','bg-purple-600 border-purple-800','bg-pink-600 border-pink-800','bg-cyan-600 border-cyan-800','bg-orange-500 border-orange-700','bg-lime-600 border-lime-800','bg-rose-600 border-rose-800'][i % 10]} hover:brightness-125 active:scale-95`}>
+                                    導線{i+1}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : <p className="text-[10px] text-slate-500">{player?.name}が選択中...</p>}
+                          </>
+                        )}
+                        {b.status === 'cut' && <p className="text-emerald-400 font-black text-sm">✅ 解除成功！</p>}
+                        {b.status === 'exploded' && <p className="text-red-400 font-black text-sm">💥 時間切れ！爆発！</p>}
+                        {b.status === 'wrong' && <p className="text-red-400 font-black text-sm">💥 間違えた！爆発！</p>}
+                      </div>
+                    );
+                  })}
+                </div>
+                {isHost && (
+                  <button onClick={finalizeBomb} className={`w-full py-3 font-black rounded-xl transition-all ${bombData.every(b=>b.status!=='active') ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-slate-800 text-slate-500 border border-slate-700'}`}>
+                    {bombData.every(b=>b.status!=='active') ? '結果確定' : '全員の解除を待機中...'}
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* クイズ（漢字/計算/英単語共通） */}
+            {(multiEventPhase === 'kanji_quiz' || multiEventPhase === 'math_quiz' || multiEventPhase === 'english_quiz') && (
+              <div className="p-6 space-y-4">
+                <div className="text-center">
+                  <div className="text-4xl mb-2">
+                    {multiEventPhase === 'kanji_quiz' ? '漢' : multiEventPhase === 'math_quiz' ? '➕' : '🔤'}
+                  </div>
+                  <h2 className="text-xl font-black text-white">
+                    {multiEventPhase === 'kanji_quiz' ? '漢字クイズ' : multiEventPhase === 'math_quiz' ? '計算クイズ' : '英単語クイズ'}
+                  </h2>
+                  <div className="flex items-center justify-center gap-4 mt-2">
+                    <span className="text-slate-400 text-sm">全問正解でダメージ無効</span>
+                    <span className={`text-sm font-black ${quizTimeLeft <= 10 ? 'text-red-400 animate-pulse' : 'text-amber-400'}`}>⏱ {quizTimeLeft}s</span>
+                  </div>
+                  <p className="text-sm mt-1">失敗でダメージ <span className="text-red-400 font-black">{multiEventDamage}</span></p>
+                </div>
+                {quizLoading ? (
+                  <div className="text-center py-8 text-slate-400 animate-pulse">問題を生成中...</div>
+                ) : (
+                  <>
+                    <div className="flex gap-1 justify-center mb-2">
+                      {Array.from({length:5}).map((_,i) => (
+                        <button key={i} onClick={() => setQuizCurrentQ(i)} className={`w-8 h-8 rounded-full font-black text-xs border transition-all ${i === quizCurrentQ ? 'bg-indigo-600 border-indigo-400 text-white' : myQuizAnswers[i] !== null ? 'bg-emerald-700 border-emerald-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400'}`}>{i+1}</button>
+                      ))}
+                    </div>
+                    {quizQuestions[quizCurrentQ] && (
+                      <div className="bg-slate-950 rounded-2xl p-4 border border-slate-800 space-y-3">
+                        <p className="font-black text-white text-center text-lg">{quizQuestions[quizCurrentQ].q}</p>
+                        <div className="grid grid-cols-2 gap-2">
+                          {quizQuestions[quizCurrentQ].choices.map((c, ci) => (
+                            <button key={ci} onClick={() => answerQuiz(quizCurrentQ, ci)} className={`py-3 rounded-xl font-bold text-sm border transition-all active:scale-95 ${myQuizAnswers[quizCurrentQ] === ci ? 'bg-indigo-600 border-indigo-400 text-white' : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-indigo-500'}`}>
+                              {c}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <button
+                      onClick={submitQuiz}
+                      disabled={myQuizAnswers.some(a => a === null) && quizTimeLeft > 0}
+                      className={`w-full py-3 font-black rounded-xl transition-all ${myQuizAnswers.every(a => a !== null) || quizTimeLeft === 0 ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-slate-800 text-slate-500 border border-slate-700'}`}>
+                      {quizTimeLeft === 0 ? '時間切れ！提出' : myQuizAnswers.every(a => a !== null) ? '回答提出！' : `残り ${myQuizAnswers.filter(a=>a!==null).length}/5 問`}
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+
+          </div>
+        </div>
+      )}
     </div>
   );
 };
