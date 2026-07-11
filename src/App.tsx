@@ -8,15 +8,19 @@ import {
 } from 'lucide-react';
 
 // ===== ルームAPI ヘルパー =====
+// GitHub Pages上ではAPIが動かないため、window.__API_BASE__があればそれを使う
+declare global { interface Window { __API_BASE__?: string; } }
+const API_BASE = (typeof window !== 'undefined' && window.__API_BASE__) ? window.__API_BASE__ : '';
+
 const API = {
   getRoom: async (roomId: string) => {
-    const res = await fetch(`/api/rooms/${roomId}`);
+    const res = await fetch(`${API_BASE}/api/rooms/${roomId}`);
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json();
   },
   createRoom: async (data: any) => {
-    const res = await fetch('/api/rooms', {
+    const res = await fetch(`${API_BASE}/api/rooms`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -25,7 +29,7 @@ const API = {
     return res.json();
   },
   patchRoom: async (roomId: string, patch: any) => {
-    const res = await fetch(`/api/rooms/${roomId}`, {
+    const res = await fetch(`${API_BASE}/api/rooms/${roomId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch)
