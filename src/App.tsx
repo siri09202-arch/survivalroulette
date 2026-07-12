@@ -61,7 +61,7 @@ interface Config { rangeMin: number; rangeMax: number; rangeProb: number; fixedI
 interface ReviveEvent { id: number; turn: number; type: 'steal' | 'copy'; }
 interface ManualPlayer { name: string; teamIndex: number; }
 
-// ===== 数値変換関数（全35種対応） =====
+// ===== 数値変換関数（全100種以上対応） =====
 const convertNumber = (num: number | string, format: string): string | number => {
   if (typeof num !== 'number' || format === 'default') return num;
   const n = Math.floor(num);
@@ -82,6 +82,8 @@ const convertNumber = (num: number | string, format: string): string | number =>
     case 'indic':    return digitMap(['०','१','२','३','४','५','६','७','८','९']); // インド数字
     case 'thai':     return digitMap(['๐','๑','๒','๓','๔','๕','๖','๗','๘','๙']);
     case 'arabic_eastern': return digitMap(['٠','١','٢','٣','٤','٥','٦','٧','٨','٩']); // 東アラビア
+    case 'persian':  return digitMap(['۰','۱','۲','۳','۴','۵','۶','۷','۸','۹']); // ペルシア
+    case 'nko':      return digitMap(['߀','߁','߂','߃','߄','߅','߆','߇','߈','߉']); // ンコ
     case 'fullwidth':return digitMap(['０','１','２','３','４','５','６','７','８','９']);
     case 'devanagari':return digitMap(['०','१','२','३','४','५','६','७','८','९']);
     case 'bengali':  return digitMap(['০','১','২','৩','৪','৫','৬','৭','৮','৯']);
@@ -92,22 +94,112 @@ const convertNumber = (num: number | string, format: string): string | number =>
     case 'malayalam':return digitMap(['൦','൧','൨','൩','൪','൫','൬','൭','൮','൯']);
     case 'tibetan':  return digitMap(['༠','༡','༢','༣','༤','༥','༦','༧','༨','༩']);
     case 'myanmar':  return digitMap(['၀','၁','၂','၃','၄','၅','၆','၇','၈','၉']);
+    case 'myanmar_shan': return digitMap(['႐','႑','႒','႓','႔','႕','႖','႗','႘','႙']); // ミャンマー・シャン
+    case 'myanmar_tai_laing': return digitMap(['꧰','꧱','꧲','꧳','꧴','꧵','꧶','꧷','꧸','꧹']); // ミャンマー・タイレー
     case 'khmer':    return digitMap(['០','១','២','៣','៤','៥','៦','៧','៨','៩']);
     case 'lao':      return digitMap(['໐','໑','໒','໓','໔','໕','໖','໗','໘','໙']);
     case 'mongolian':return digitMap(['᠐','᠑','᠒','᠓','᠔','᠕','᠖','᠗','᠘','᠙']);
     case 'oriya':    return digitMap(['୦','୧','୨','୩','୪','୫','୬','୭','୮','୯']);
     case 'tamil':    return digitMap(['௦','௧','௨','௩','௪','௫','௬','௭','௮','௯']);
-    case 'tai_tham': return digitMap(['᪀','᪁','᪂','᪃','᪄','᪅','᪆','᪇','᪈','᪉']);
+    case 'sinhala':  return digitMap(['෦','෧','෨','෩','෪','෫','෬','෭','෮','෯']); // シンハラ
+    case 'tai_tham': return digitMap(['᪀','᪁','᪂','᪃','᪄','᪅','᪆','᪇','᪈','᪉']); // タイ・タムホラ数字
+    case 'tai_tham2':return digitMap(['᪐','᪑','᪒','᪓','᪔','᪕','᪖','᪗','᪘','᪙']); // タイ・タムタム数字
     case 'sundanese':return digitMap(['᮰','᮱','᮲','᮳','᮴','᮵','᮶','᮷','᮸','᮹']);
     case 'balinese': return digitMap(['᭐','᭑','᭒','᭓','᭔','᭕','᭖','᭗','᭘','᭙']);
     case 'javanese': return digitMap(['꧐','꧑','꧒','꧓','꧔','꧕','꧖','꧗','꧘','꧙']);
     case 'cham':     return digitMap(['꩐','꩑','꩒','꩓','꩔','꩕','꩖','꩗','꩘','꩙']);
+    case 'limbu':    return digitMap(['᥆','᥇','᥈','᥉','᥊','᥋','᥌','᥍','᥎','᥏']); // リンブ
+    case 'new_tai_lue': return digitMap(['᧐','᧑','᧒','᧓','᧔','᧕','᧖','᧗','᧘','᧙']); // ニュータイルー
+    case 'lepcha':   return digitMap(['᱀','᱁','᱂','᱃','᱄','᱅','᱆','᱇','᱈','᱉']); // レプチャ
+    case 'ol_chiki': return digitMap(['᱐','᱑','᱒','᱓','᱔','᱕','᱖','᱗','᱘','᱙']); // オルチキ
+    case 'vai':      return digitMap(['꘠','꘡','꘢','꘣','꘤','꘥','꘦','꘧','꘨','꘩']); // ヴァイ
+    case 'saurashtra':return digitMap(['꣐','꣑','꣒','꣓','꣔','꣕','꣖','꣗','꣘','꣙']); // サウルシュトラ
+    case 'kayah_li': return digitMap(['꤀','꤁','꤂','꤃','꤄','꤅','꤆','꤇','꤈','꤉']); // カヤー
+    case 'meetei':   return digitMap(['꯰','꯱','꯲','꯳','꯴','꯵','꯶','꯷','꯸','꯹']); // メイテイ
+    case 'brahmi':   return digitMap(['𑁦','𑁧','𑁨','𑁩','𑁪','𑁫','𑁬','𑁭','𑁮','𑁯']); // ブラーフミー
+    case 'sora_sompeng': return digitMap(['𑃰','𑃱','𑃲','𑃳','𑃴','𑃵','𑃶','𑃷','𑃸','𑃹']); // ソラ・ソンペン
+    case 'chakma':   return digitMap(['𑄶','𑄷','𑄸','𑄹','𑄺','𑄻','𑄼','𑄽','𑄾','𑄿']); // チャクマ
+    case 'sharada':  return digitMap(['𑇐','𑇑','𑇒','𑇓','𑇔','𑇕','𑇖','𑇗','𑇘','𑇙']); // シャーラダー
+    case 'takri':    return digitMap(['𑛀','𑛁','𑛂','𑛃','𑛄','𑛅','𑛆','𑛇','𑛈','𑛉']); // タクリ
+    case 'modi':     return digitMap(['𑙐','𑙑','𑙒','𑙓','𑙔','𑙕','𑙖','𑙗','𑙘','𑙙']); // モディ
+    case 'tirhuta':  return digitMap(['𑓐','𑓑','𑓒','𑓓','𑓔','𑓕','𑓖','𑓗','𑓘','𑓙']); // ティルフタ
+    case 'warang_citi': return digitMap(['𑣠','𑣡','𑣢','𑣣','𑣤','𑣥','𑣦','𑣧','𑣨','𑣩']); // ワランチティ
+    case 'adlam':    return digitMap(['𑱐','𑱑','𑱒','𑱓','𑱔','𑱕','𑱖','𑱗','𑱘','𑱙']); // アドラム
+    case 'pahawh_hmong': return digitMap(['𖭐','𖭑','𖭒','𖭓','𖭔','𖭕','𖭖','𖭗','𖭘','𖭙']); // パハウ・フモン
+    case 'dogra':    return digitMap(['𑠀','𑠁','𑠂','𑠃','𑠄','𑠅','𑠆','𑠇','𑠈','𑠉']); // ドグラ
+    case 'dives_akuru': return digitMap(['𑥐','𑥑','𑥒','𑥓','𑥔','𑥕','𑥖','𑥗','𑥘','𑥙']); // ディベス・アクル
+    case 'masaram_gondi': return digitMap(['𑵐','𑵑','𑵒','𑵓','𑵔','𑵕','𑵖','𑵗','𑵘','𑵙']); // マサラム・ゴンディ
+    case 'gunjala_gondi': return digitMap(['𑶠','𑶡','𑶢','𑶣','𑶤','𑶥','𑶦','𑶧','𑶨','𑶩']); // グンジャラ・ゴンディ
+    case 'kaithi':   return digitMap(['𑂠','𑂡','𑂢','𑂣','𑂤','𑂥','𑂦','𑂧','𑂨','𑂩']); // カイティ
+    case 'mahajani': return digitMap(['𑅐','𑅑','𑅒','𑅓','𑅔','𑅕','𑅖','𑅗','𑅘','𑅙']); // マハージャニー
+    case 'osmanya':  return digitMap(['𐒠','𐒡','𐒢','𐒣','𐒤','𐒥','𐒦','𐒧','𐒨','𐒩']); // オスマニア
+    case 'superscript': return digitMap(['⁰','¹','²','³','⁴','⁵','⁶','⁷','⁸','⁹']); // 上付き
+    case 'subscript':   return digitMap(['₀','₁','₂','₃','₄','₅','₆','₇','₈','₉']); // 下付き
+    case 'bold_digit':  return digitMap(['𝟎','𝟏','𝟐','𝟑','𝟒','𝟓','𝟔','𝟕','𝟖','𝟗']); // 太字
+    case 'double_struck': return digitMap(['𝟘','𝟙','𝟚','𝟛','𝟜','𝟝','𝟞','𝟟','𝟠','𝟡']); // 黒板太字
+    case 'sans_serif':  return digitMap(['𝟢','𝟣','𝟤','𝟥','𝟦','𝟧','𝟨','𝟩','𝟪','𝟫']); // サンセリフ
+    case 'sans_bold':   return digitMap(['𝟬','𝟭','𝟮','𝟯','𝟰','𝟱','𝟲','𝟳','𝟴','𝟵']); // サンセリフ太字
+    case 'monospace':   return digitMap(['𝟶','𝟷','𝟸','𝟹','𝟺','𝟻','𝟼','𝟽','𝟾','𝟿']); // 等幅
+    case 'suzhou': {
+      // 蘇州数字（商業用）
+      const suMap: Record<string, string> = { '0':'〇','1':'〡','2':'〢','3':'〣','4':'〤','5':'〥','6':'〦','7':'〧','8':'〨','9':'〩' };
+      return n.toString().split('').map(d => suMap[d] ?? d).join('');
+    }
+    case 'black_circled': {
+      // 黒丸数字 ⓿❶❷…❾（0-9）
+      const bc = ['⓿','❶','❷','❸','❹','❺','❻','❼','❽','❾'];
+      if (n >= 0 && n <= 9) return bc[n];
+      return n.toString().split('').map(d => bc[parseInt(d)] ?? d).join('');
+    }
     case 'circled': {
       const c = ['⓪','①','②','③','④','⑤','⑥','⑦','⑧','⑨','⑩','⑪','⑫','⑬','⑭','⑮','⑯','⑰','⑱','⑲','⑳',
                  '㉑','㉒','㉓','㉔','㉕','㉖','㉗','㉘','㉙','㉚','㉛','㉜','㉝','㉞','㉟','㊱','㊲','㊳','㊴','㊵',
                  '㊶','㊷','㊸','㊹','㊺','㊻','㊼','㊽','㊾','㊿'];
       if (n >= 0 && n <= 50) return c[n];
       return n.toString().split('').map(d => c[parseInt(d)] ?? d).join('');
+    }
+    case 'parenthesized': {
+      // 括弧付き数字 ①②…⑳（丸囲みと別枠として1-20）
+      const p = ['⑴','⑵','⑶','⑷','⑸','⑹','⑺','⑻','⑼','⑽','⑾','⑿','⒀','⒁','⒂','⒃','⒄','⒅','⒆','⒇'];
+      if (n >= 1 && n <= 20) return p[n - 1];
+      return n.toString().split('').map(d => (parseInt(d) >= 1 ? p[parseInt(d) - 1] : '⑽') ?? d).join('');
+    }
+    case 'dotted': {
+      // ドット付き数字 ⒈⒉…⒛
+      const dot = ['⒈','⒉','⒊','⒋','⒌','⒍','⒎','⒏','⒐','⒑','⒒','⒓','⒔','⒕','⒖','⒗','⒘','⒙','⒚','⒛'];
+      if (n >= 1 && n <= 20) return dot[n - 1];
+      return n.toString().split('').map(d => (parseInt(d) >= 1 ? dot[parseInt(d) - 1] : dot[0]) ?? d).join('');
+    }
+    case 'counting_rod': {
+      // カウントロッド数字（算木）
+      const cr = ['𝍠','𝍡','𝍢','𝍣','𝍤','𝍥','𝍦','𝍧','𝍨','𝍩'];
+      return n.toString().split('').map(d => cr[parseInt(d)] ?? d).join('');
+    }
+    case 'tangut': {
+      // 西夏文字（Tangut）数字
+      // 1=𘈩 2=𗍫 3=𘕕 4=𗥃 5=𗏁 6=𗤁 7=𗒹 8=𘉋 9=𗢭 10=𗰗 100=𘊝
+      const tangutDigits: Record<number, string> = {
+        0: '𗰭', 1: '𘈩', 2: '𗍫', 3: '𘕕', 4: '𗥃',
+        5: '𗏁', 6: '𗤁', 7: '𗒹', 8: '𘉋', 9: '𗢭'
+      };
+      const tangutTens = '𗰗'; // 10
+      const tangutHunds = '𘊝'; // 100
+      if (n <= 0) return tangutDigits[0];
+      if (n <= 9) return tangutDigits[n];
+      if (n < 100) {
+        const t = Math.floor(n / 10);
+        const u = n % 10;
+        const tensStr = t === 1 ? tangutTens : tangutDigits[t] + tangutTens;
+        return tensStr + (u > 0 ? tangutDigits[u] : '');
+      }
+      const h = Math.floor(n / 100);
+      const rest = n % 100;
+      const hunStr = h === 1 ? tangutHunds : tangutDigits[h] + tangutHunds;
+      if (rest === 0) return hunStr;
+      if (rest < 10) return hunStr + tangutDigits[rest];
+      const rt = Math.floor(rest / 10);
+      const ru = rest % 10;
+      return hunStr + (rt === 1 ? tangutTens : tangutDigits[rt] + tangutTens) + (ru > 0 ? tangutDigits[ru] : '');
     }
     case 'greek': {
       // ギリシャ数字（ミレトス式）
@@ -139,8 +231,6 @@ const convertNumber = (num: number | string, format: string): string | number =>
       return res || n.toString();
     }
     case 'armenian': {
-      const aVals = [1,2,3,4,5,6,7,8,9,10,20,30,40,50,60,70,80,90,100,200,300,400,500,600,700,800,900,1000,2000,3000,4000,5000,6000,7000,8000,9000];
-      const aChars= 'ԱԲԳԴԵZԷԸԹԺԺԽLԾKHDZRGHCWPHQ'.split('');
       const armenianLetters = ['Ա','Բ','Գ','Դ','Ե','Զ','Է','Ը','Թ','Ժ','Ի','Լ','Խ','Ծ','Կ','Հ','Ձ','Ղ','Ճ','Մ','Յ','Ն','Շ','Ո','Չ','Պ','Ջ','Ռ','Ս','Վ','Տ','Ր','Ց','Ւ','Փ','Ք'];
       const armVals=[9000,8000,7000,6000,5000,4000,3000,2000,1000,900,800,700,600,500,400,300,200,100,90,80,70,60,50,40,30,20,10,9,8,7,6,5,4,3,2,1];
       if (n <= 0) return '0';
@@ -151,8 +241,6 @@ const convertNumber = (num: number | string, format: string): string | number =>
       return res || n.toString();
     }
     case 'georgian': {
-      const geoVals  = [1000,900,800,700,600,500,400,300,200,100,90,80,70,60,50,40,30,20,10,9,8,7,6,5,4,3,2,1];
-      const geoChars = ['ჵ','ჰ','ჯ','ჴ','ხ','ჭ','წ','ძ','ც','ქ','ჩ','შ','ყ','ღ','ფ','ო','ნ','მ','ლ','კ','ი','თ','ზ','ვ','ე','დ','გ','ბ','ა'];
       const gv2 = [10000,9000,8000,7000,6000,5000,4000,3000,2000,1000,900,800,700,600,500,400,300,200,100,90,80,70,60,50,40,30,20,10,9,8,7,6,5,4,3,2,1];
       const gc2 = ['ჵჵ','ჵჰ','ჵჯ','ჵჴ','ჵხ','ჵჭ','ჵწ','ჵძ','ჵც','ჵ','ჰ','ჯ','ჴ','ხ','ჭ','წ','ძ','ც','ქ','ჩ','შ','ყ','ღ','ფ','ო','ნ','მ','ლ','კ','ი','თ','ზ','ვ','ე','დ','გ','ბ','ა'];
       if (n <= 0) return '0';
@@ -294,41 +382,92 @@ const App = () => {
   const [activeNumberFormat, setActiveNumberFormat] = useState('default');
 
   const ALL_NUMBER_FORMATS = [
-    { id: 'roman',          label: 'ローマ数字' },
-    { id: 'greek',          label: 'ギリシャ数字' },
-    { id: 'kanji',          label: '漢数字' },
-    { id: 'daiji',          label: '大字' },
-    { id: 'indic',          label: 'インド数字' },
-    { id: 'thai',           label: 'タイ数字' },
-    { id: 'arabic_eastern', label: 'アラビア文字数字' },
-    { id: 'fullwidth',      label: '全角数字' },
-    { id: 'circled',        label: '丸数字' },
-    { id: 'devanagari',     label: 'デーヴァナーガリー数字' },
-    { id: 'bengali',        label: 'ベンガル数字' },
-    { id: 'gujarati',       label: 'グジャラート数字' },
-    { id: 'gurmukhi',       label: 'グルムキー数字' },
-    { id: 'kannada',        label: 'カンナダ数字' },
-    { id: 'telugu',         label: 'テルグ数字' },
-    { id: 'malayalam',      label: 'マラヤーラム数字' },
-    { id: 'tibetan',        label: 'チベット数字' },
-    { id: 'myanmar',        label: 'ミャンマー数字' },
-    { id: 'khmer',          label: 'クメール数字' },
-    { id: 'lao',            label: 'ラオス数字' },
-    { id: 'mongolian',      label: 'モンゴル数字' },
-    { id: 'oriya',          label: 'オリヤー数字' },
-    { id: 'tamil',          label: 'タミル数字' },
-    { id: 'tai_tham',       label: 'ランナー数字' },
-    { id: 'sundanese',      label: 'スンダ数字' },
-    { id: 'balinese',       label: 'バリ数字' },
-    { id: 'javanese',       label: 'ジャワ数字' },
-    { id: 'cham',           label: 'チャム数字' },
-    { id: 'babylonian',     label: 'バビロニア数字' },
-    { id: 'mayan',          label: 'マヤ数字' },
-    { id: 'egyptian',       label: 'エジプト数字' },
-    { id: 'ethiopic',       label: 'エチオピア数字' },
-    { id: 'hebrew',         label: 'ヘブライ数字' },
-    { id: 'armenian',       label: 'アルメニア数字' },
-    { id: 'georgian',       label: 'ジョージア数字' },
+    // ── アジア系 ──
+    { id: 'roman',           label: 'ローマ数字' },
+    { id: 'greek',           label: 'ギリシャ数字' },
+    { id: 'kanji',           label: '漢数字' },
+    { id: 'daiji',           label: '大字（漢数字）' },
+    { id: 'suzhou',          label: '蘇州数字（商業用）' },
+    { id: 'tangut',          label: '西夏文字数字' },
+    // ── インド系 ──
+    { id: 'indic',           label: 'インド数字（デーヴァ）' },
+    { id: 'devanagari',      label: 'デーヴァナーガリー数字' },
+    { id: 'bengali',         label: 'ベンガル数字' },
+    { id: 'gujarati',        label: 'グジャラート数字' },
+    { id: 'gurmukhi',        label: 'グルムキー数字' },
+    { id: 'kannada',         label: 'カンナダ数字' },
+    { id: 'telugu',          label: 'テルグ数字' },
+    { id: 'malayalam',       label: 'マラヤーラム数字' },
+    { id: 'oriya',           label: 'オリヤー数字' },
+    { id: 'tamil',           label: 'タミル数字' },
+    { id: 'sinhala',         label: 'シンハラ数字' },
+    { id: 'brahmi',          label: 'ブラーフミー数字' },
+    { id: 'sora_sompeng',    label: 'ソラ・ソンペン数字' },
+    { id: 'chakma',          label: 'チャクマ数字' },
+    { id: 'sharada',         label: 'シャーラダー数字' },
+    { id: 'takri',           label: 'タクリ数字' },
+    { id: 'modi',            label: 'モディ数字' },
+    { id: 'tirhuta',         label: 'ティルフタ数字' },
+    { id: 'warang_citi',     label: 'ワランチティ数字' },
+    { id: 'adlam',           label: 'アドラム数字' },
+    { id: 'dogra',           label: 'ドグラ数字' },
+    { id: 'dives_akuru',     label: 'ディベス・アクル数字' },
+    { id: 'masaram_gondi',   label: 'マサラム・ゴンディ数字' },
+    { id: 'gunjala_gondi',   label: 'グンジャラ・ゴンディ数字' },
+    { id: 'kaithi',          label: 'カイティ数字' },
+    { id: 'mahajani',        label: 'マハージャニー数字' },
+    // ── 東南アジア・中央アジア ──
+    { id: 'thai',            label: 'タイ数字' },
+    { id: 'myanmar',         label: 'ミャンマー数字' },
+    { id: 'myanmar_shan',    label: 'ミャンマー・シャン数字' },
+    { id: 'myanmar_tai_laing', label: 'ミャンマー・タイレー数字' },
+    { id: 'khmer',           label: 'クメール数字' },
+    { id: 'lao',             label: 'ラオ数字' },
+    { id: 'tibetan',         label: 'チベット数字' },
+    { id: 'mongolian',       label: 'モンゴル数字' },
+    { id: 'tai_tham',        label: 'タイ・タム（ホラ）数字' },
+    { id: 'tai_tham2',       label: 'タイ・タム（タム）数字' },
+    { id: 'limbu',           label: 'リンブ数字' },
+    { id: 'new_tai_lue',     label: 'ニュータイルー数字' },
+    { id: 'balinese',        label: 'バリ数字' },
+    { id: 'sundanese',       label: 'スンダ数字' },
+    { id: 'javanese',        label: 'ジャワ数字' },
+    { id: 'cham',            label: 'チャム数字' },
+    { id: 'lepcha',          label: 'レプチャ数字' },
+    { id: 'ol_chiki',        label: 'オルチキ数字' },
+    { id: 'meetei',          label: 'メイテイ・マイェク数字' },
+    { id: 'pahawh_hmong',    label: 'パハウ・フモン数字' },
+    // ── 中東・アフリカ系 ──
+    { id: 'arabic_eastern',  label: 'アラビア文字数字（東）' },
+    { id: 'persian',         label: 'ペルシア数字' },
+    { id: 'nko',             label: 'ンコ数字' },
+    { id: 'osmanya',         label: 'オスマニア数字' },
+    { id: 'ethiopic',        label: 'エチオピア数字（ゲエズ）' },
+    { id: 'vai',             label: 'ヴァイ数字' },
+    // ── 古代文字 ──
+    { id: 'babylonian',      label: 'バビロニア数字（楔形）' },
+    { id: 'mayan',           label: 'マヤ数字' },
+    { id: 'egyptian',        label: 'エジプト象形数字' },
+    { id: 'hebrew',          label: 'ヘブライ数字' },
+    { id: 'armenian',        label: 'アルメニア数字' },
+    { id: 'georgian',        label: 'ジョージア数字' },
+    // ── 特殊文字・記号数字 ──
+    { id: 'fullwidth',       label: '全角数字' },
+    { id: 'circled',         label: '丸囲み数字（白地）' },
+    { id: 'black_circled',   label: '黒丸数字' },
+    { id: 'parenthesized',   label: '括弧付き数字' },
+    { id: 'dotted',          label: 'ドット付き数字' },
+    { id: 'counting_rod',    label: 'カウントロッド数字' },
+    { id: 'superscript',     label: '上付き数字' },
+    { id: 'subscript',       label: '下付き数字' },
+    { id: 'bold_digit',      label: '太字数字' },
+    { id: 'double_struck',   label: '黒板太字数字' },
+    { id: 'sans_serif',      label: 'サンセリフ数字' },
+    { id: 'sans_bold',       label: 'サンセリフ太字数字' },
+    { id: 'monospace',       label: '等幅数字' },
+    // ── その他アジア文字圏 ──
+    { id: 'saurashtra',      label: 'サウルシュトラ数字' },
+    { id: 'kayah_li',        label: 'カヤー数字' },
   ];
 
 
