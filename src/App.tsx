@@ -101,7 +101,7 @@ const convertNumber = (num: number | string, format: string): string | number =>
     case 'mongolian':return digitMap(['᠐','᠑','᠒','᠓','᠔','᠕','᠖','᠗','᠘','᠙']);
     case 'oriya':    return digitMap(['୦','୧','୨','୩','୪','୫','୬','୭','୮','୯']);
     case 'tamil':    return digitMap(['௦','௧','௨','௩','௪','௫','௬','௭','௮','௯']);
-    case 'sinhala':  return digitMap(['෦','෧','෨','෩','෪','෫','෬','෭','෮','෯']); // シンハラ
+    case 'sinhala':  return digitMap(['0','𑇡','𑇢','𑇣','𑇤','𑇥','𑇦','𑇧','𑇨','𑇩']); // シンハラ古形数字 (U+111E1-)
     case 'tai_tham': return digitMap(['᪀','᪁','᪂','᪃','᪄','᪅','᪆','᪇','᪈','᪉']); // タイ・タムホラ数字
     case 'tai_tham2':return digitMap(['᪐','᪑','᪒','᪓','᪔','᪕','᪖','᪗','᪘','᪙']); // タイ・タムタム数字
     case 'sundanese':return digitMap(['᮰','᮱','᮲','᮳','᮴','᮵','᮶','᮷','᮸','᮹']);
@@ -126,7 +126,7 @@ const convertNumber = (num: number | string, format: string): string | number =>
     case 'warang_citi': return digitMap(['𑣠','𑣡','𑣢','𑣣','𑣤','𑣥','𑣦','𑣧','𑣨','𑣩']); // ワランチティ
     case 'adlam':    return digitMap(['𑱐','𑱑','𑱒','𑱓','𑱔','𑱕','𑱖','𑱗','𑱘','𑱙']); // アドラム
     case 'pahawh_hmong': return digitMap(['𖭐','𖭑','𖭒','𖭓','𖭔','𖭕','𖭖','𖭗','𖭘','𖭙']); // パハウ・フモン
-    case 'dogra':    return digitMap(['𑠀','𑠁','𑠂','𑠃','𑠄','𑠅','𑠆','𑠇','𑠈','𑠉']); // ドグラ
+    case 'dogra':    return digitMap(['𑣠','𑣡','𑣢','𑣣','𑣤','𑣥','𑣦','𑣧','𑣨','𑣩']); // ドグラ (U+118E0-)
     case 'dives_akuru': return digitMap(['𑥐','𑥑','𑥒','𑥓','𑥔','𑥕','𑥖','𑥗','𑥘','𑥙']); // ディベス・アクル
     case 'masaram_gondi': return digitMap(['𑵐','𑵑','𑵒','𑵓','𑵔','𑵕','𑵖','𑵗','𑵘','𑵙']); // マサラム・ゴンディ
     case 'gunjala_gondi': return digitMap(['𑶠','𑶡','𑶢','𑶣','𑶤','𑶥','𑶦','𑶧','𑶨','𑶩']); // グンジャラ・ゴンディ
@@ -176,30 +176,60 @@ const convertNumber = (num: number | string, format: string): string | number =>
       return n.toString().split('').map(d => cr[parseInt(d)] ?? d).join('');
     }
     case 'tangut': {
-      // 西夏文字（Tangut）数字
-      // 1=𘈩 2=𗍫 3=𘕕 4=𗥃 5=𗏁 6=𗤁 7=𗒹 8=𘉋 9=𗢭 10=𗰗 100=𘊝
-      const tangutDigits: Record<number, string> = {
-        0: '𗰭', 1: '𘈩', 2: '𗍫', 3: '𘕕', 4: '𗥃',
-        5: '𗏁', 6: '𗤁', 7: '𗒹', 8: '𘉋', 9: '𗢭'
-      };
-      const tangutTens = '𗰗'; // 10
-      const tangutHunds = '𘊝'; // 100
-      if (n <= 0) return tangutDigits[0];
-      if (n <= 9) return tangutDigits[n];
-      if (n < 100) {
-        const t = Math.floor(n / 10);
-        const u = n % 10;
-        const tensStr = t === 1 ? tangutTens : tangutDigits[t] + tangutTens;
-        return tensStr + (u > 0 ? tangutDigits[u] : '');
-      }
-      const h = Math.floor(n / 100);
-      const rest = n % 100;
-      const hunStr = h === 1 ? tangutHunds : tangutDigits[h] + tangutHunds;
-      if (rest === 0) return hunStr;
-      if (rest < 10) return hunStr + tangutDigits[rest];
-      const rt = Math.floor(rest / 10);
-      const ru = rest % 10;
-      return hunStr + (rt === 1 ? tangutTens : tangutDigits[rt] + tangutTens) + (ru > 0 ? tangutDigits[ru] : '');
+      // 西夏文字（Tangut）数字 — Noto Serif Tangutフォントが必要
+      // コードポイントはHTMLプレビューサンプル準拠（フォント内PUAマッピング）
+      const tD = [
+        String.fromCodePoint(0x1F707), // 0
+        String.fromCodePoint(0x1F901), // 1
+        String.fromCodePoint(0x1F36B), // 2
+        String.fromCodePoint(0x1F85E), // 3
+        String.fromCodePoint(0x1F8A5), // 4
+        String.fromCodePoint(0x1F3C1), // 5
+        String.fromCodePoint(0x1F902), // 6
+        String.fromCodePoint(0x1F3F5), // 7
+        String.fromCodePoint(0x1F5D9), // 8
+        String.fromCodePoint(0x1F8AD), // 9
+      ];
+      return digitMap(tD);
+    }
+    case 'sinhala_archaic': {
+      // シンハラ古形数字 (U+111E1-111E9) — Noto Sans Sinhalaフォントが必要
+      // 0は古形なし → 現代数字で代用
+      const sinhalaD = ['0', ...Array.from({length: 9}, (_, i) => String.fromCodePoint(0x111E1 + i))];
+      return digitMap(sinhalaD);
+    }
+    case 'kharoshthi': {
+      // カローシュティー数字 (加算式) — Noto Sans Kharoshthiフォントが必要
+      // 1=𐩀 2=𐩁 3=𐩂 4=𐩃 5=4+1 6=4+2 7=4+3 8=4+4 9=4+4+1
+      const k1 = String.fromCodePoint(0x10A40);
+      const k2 = String.fromCodePoint(0x10A41);
+      const k3 = String.fromCodePoint(0x10A42);
+      const k4 = String.fromCodePoint(0x10A43);
+      const kharMap = ['0', k1, k2, k3, k4, k4+k1, k4+k2, k4+k3, k4+k4, k4+k4+k1];
+      // 桁ごとに上記マップを適用（各桁の数値表現を結合）
+      if (n === 0) return kharMap[0];
+      return n.toString().split('').map(d => kharMap[parseInt(d)] ?? d).join('');
+    }
+    case 'mandaic': {
+      // マンダ文字数字 (U+0840-0848 → 1-9) — Noto Sans Mandaicフォントが必要
+      // 0は古形なし → 現代数字で代用
+      const mandaicD = ['0', ...Array.from({length: 9}, (_, i) => String.fromCodePoint(0x0840 + i))];
+      return digitMap(mandaicD);
+    }
+    case 'old_south_arabian': {
+      // 古代南アラビア数字 (加算式) — Noto Sans Old South Arabianフォントが必要
+      // 1=𐩽 5=𐩾 0は現代数字で代用
+      const osa1c = String.fromCodePoint(0x10A7D);
+      const osa5c = String.fromCodePoint(0x10A7E);
+      const osaMap = ['0', osa1c, osa1c.repeat(2), osa1c.repeat(3), osa1c.repeat(4),
+        osa5c, osa5c+osa1c, osa5c+osa1c.repeat(2), osa5c+osa1c.repeat(3), osa5c+osa1c.repeat(4)];
+      if (n === 0) return osaMap[0];
+      return n.toString().split('').map(d => osaMap[parseInt(d)] ?? d).join('');
+    }
+    case 'bassa_vah': {
+      // バサ・ヴァ数字 — Noto Sans Bassa Vahフォントが必要
+      // バサ・ヴァ文字は標準アラビア数字をそのフォントで表示
+      return n.toString();
     }
     case 'greek': {
       // ギリシャ数字（ミレトス式）
@@ -308,6 +338,21 @@ const convertNumber = (num: number | string, format: string): string | number =>
   }
 };
 
+// ===== 特殊フォントが必要な形式のfontFamilyスタイルを返す =====
+const SPECIAL_FONT_STYLES: Record<string, React.CSSProperties> = {
+  tangut:            { fontFamily: "'Noto Serif Tangut', serif" },
+  sinhala:           { fontFamily: "'Noto Sans Sinhala', sans-serif" },
+  sinhala_archaic:   { fontFamily: "'Noto Sans Sinhala', sans-serif" },
+  kharoshthi:        { fontFamily: "'Noto Sans Kharoshthi', 'Segoe UI Historic', sans-serif" },
+  mandaic:           { fontFamily: "'Noto Sans Mandaic', 'Segoe UI Historic', sans-serif" },
+  old_south_arabian: { fontFamily: "'Noto Sans Old South Arabian', 'Segoe UI Historic', sans-serif" },
+  bassa_vah:         { fontFamily: "'Noto Sans Bassa Vah', sans-serif" },
+  dogra:             { fontFamily: "'Noto Serif Dogra', sans-serif" },
+  dives_akuru:       { fontFamily: "'Noto Sans Dives Akuru', sans-serif" },
+};
+const getNumberFontStyle = (format: string): React.CSSProperties =>
+  SPECIAL_FONT_STYLES[format] ?? {};
+
 const App = () => {
   const [myUid] = useState<string>(() => getOrCreateUid());
   const [phase, setPhase] = useState('home');
@@ -388,7 +433,6 @@ const App = () => {
     { id: 'kanji',           label: '漢数字' },
     { id: 'daiji',           label: '大字（漢数字）' },
     { id: 'suzhou',          label: '蘇州数字（商業用）' },
-    { id: 'tangut',          label: '西夏文字数字' },
     // ── インド系 ──
     { id: 'indic',           label: 'インド数字（デーヴァ）' },
     { id: 'devanagari',      label: 'デーヴァナーガリー数字' },
@@ -401,6 +445,8 @@ const App = () => {
     { id: 'oriya',           label: 'オリヤー数字' },
     { id: 'tamil',           label: 'タミル数字' },
     { id: 'sinhala',         label: 'シンハラ数字' },
+    { id: 'sinhala_archaic',  label: 'シンハラ古形数字 ✦' },
+    { id: 'kharoshthi',       label: 'カローシュティー数字 ✦' },
     { id: 'brahmi',          label: 'ブラーフミー数字' },
     { id: 'sora_sompeng',    label: 'ソラ・ソンペン数字' },
     { id: 'chakma',          label: 'チャクマ数字' },
@@ -410,8 +456,8 @@ const App = () => {
     { id: 'tirhuta',         label: 'ティルフタ数字' },
     { id: 'warang_citi',     label: 'ワランチティ数字' },
     { id: 'adlam',           label: 'アドラム数字' },
-    { id: 'dogra',           label: 'ドグラ数字' },
-    { id: 'dives_akuru',     label: 'ディベス・アクル数字' },
+    { id: 'dogra',           label: 'ドグラ数字 ✦' },
+    { id: 'dives_akuru',     label: 'ディベス・アクル数字 ✦' },
     { id: 'masaram_gondi',   label: 'マサラム・ゴンディ数字' },
     { id: 'gunjala_gondi',   label: 'グンジャラ・ゴンディ数字' },
     { id: 'kaithi',          label: 'カイティ数字' },
@@ -444,7 +490,11 @@ const App = () => {
     { id: 'osmanya',         label: 'オスマニア数字' },
     { id: 'ethiopic',        label: 'エチオピア数字（ゲエズ）' },
     { id: 'vai',             label: 'ヴァイ数字' },
+    { id: 'mandaic',          label: 'マンダ文字数字 ✦' },
+    { id: 'old_south_arabian',label: '古代南アラビア数字 ✦' },
+    { id: 'bassa_vah',        label: 'バサ・ヴァ数字 ✦' },
     // ── 古代文字 ──
+    { id: 'tangut',           label: '西夏文字数字 ✦' },
     { id: 'babylonian',      label: 'バビロニア数字（楔形）' },
     { id: 'mayan',           label: 'マヤ数字' },
     { id: 'egyptian',        label: 'エジプト象形数字' },
@@ -2161,10 +2211,12 @@ const App = () => {
             </div>
             {/* ダイス表示：サイズを小さくして横並び表示 */}
             {isDiceDisplay
-              ? <div className={`text-2xl md:text-4xl font-black leading-tight transition-all duration-75 tabular-nums text-center break-all ${isSpinning ? 'text-slate-800 scale-95 blur-[2px]' : (lastResult?.type==='heal' || lastResult?.type==='revive' ? 'text-emerald-400' : 'text-red-600')}`}>
+              ? <div className={`text-2xl md:text-4xl font-black leading-tight transition-all duration-75 tabular-nums text-center break-all ${isSpinning ? 'text-slate-800 scale-95 blur-[2px]' : (lastResult?.type==='heal' || lastResult?.type==='revive' ? 'text-emerald-400' : 'text-red-600')}`}
+                  style={getNumberFontStyle(activeNumberFormat)}>
                   {String(displayResult.amount)}
                 </div>
-              : <div className={`text-[5rem] md:text-[8rem] lg:text-[9rem] font-black leading-none transition-all duration-75 tabular-nums break-all ${isSpinning ? 'text-slate-800 scale-95 blur-[2px]' : (lastResult?.type==='heal' || lastResult?.type==='revive' ? 'text-emerald-400' : 'text-red-600')}`}>
+              : <div className={`text-[5rem] md:text-[8rem] lg:text-[9rem] font-black leading-none transition-all duration-75 tabular-nums break-all ${isSpinning ? 'text-slate-800 scale-95 blur-[2px]' : (lastResult?.type==='heal' || lastResult?.type==='revive' ? 'text-emerald-400' : 'text-red-600')}`}
+                  style={getNumberFontStyle(activeNumberFormat)}>
                   {displayResult.amount}
                 </div>
             }
