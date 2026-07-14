@@ -177,18 +177,18 @@ const convertNumber = (num: number | string, format: string): string | number =>
     }
     case 'tangut': {
       // 西夏文字（Tangut）数字 — Noto Serif Tangutフォントが必要
-      // コードポイントはHTMLプレビューサンプル準拠（フォント内PUAマッピング）
+      // U+17000台の正規Tangutコードポイント使用
       const tD = [
-        String.fromCodePoint(0x1F707), // 0
-        String.fromCodePoint(0x1F901), // 1
-        String.fromCodePoint(0x1F36B), // 2
-        String.fromCodePoint(0x1F85E), // 3
-        String.fromCodePoint(0x1F8A5), // 4
-        String.fromCodePoint(0x1F3C1), // 5
-        String.fromCodePoint(0x1F902), // 6
-        String.fromCodePoint(0x1F3F5), // 7
-        String.fromCodePoint(0x1F5D9), // 8
-        String.fromCodePoint(0x1F8AD), // 9
+        '0',                              // 0 (西夏文字に0相当なし → アラビア数字)
+        String.fromCodePoint(0x18229),    // 1
+        String.fromCodePoint(0x1736B),    // 2
+        String.fromCodePoint(0x18555),    // 3
+        String.fromCodePoint(0x17943),    // 4
+        String.fromCodePoint(0x173C1),    // 5
+        String.fromCodePoint(0x17901),    // 6
+        String.fromCodePoint(0x174B9),    // 7
+        String.fromCodePoint(0x1824B),    // 8
+        String.fromCodePoint(0x178AD),    // 9
       ];
       return digitMap(tD);
     }
@@ -523,7 +523,7 @@ const App = () => {
 
   // diceConfig: min=ダイス面数下限, max=ダイス面数上限, diceCount=個数
   // diceConfig: minCount〜maxCount個のダイスをランダム個振る、各1〜diceMax面
-  const [diceConfig, setDiceConfig] = useState({ minCount: 2, maxCount: 2, faceMin: 1, faceMax: 100 });
+  const [diceConfig, setDiceConfig] = useState({ minCount: 1, maxCount: 10, faceMin: 1, faceMax: 100 });
   const [enabledFormats, setEnabledFormats] = useState(ALL_NUMBER_FORMATS.map(f => f.id));
 
   const [manualPlayers, setManualPlayers] = useState<ManualPlayer[]>([]);
@@ -1915,13 +1915,26 @@ const App = () => {
                               </div>
                             )}
                             {enabledSpecialEvents.includes(ev.id) && ev.id === 'numberFormat' && (
-                              <div className="pl-3 pr-2 py-2 bg-slate-900/50 rounded-b-xl border border-purple-500/50 border-t-0 grid grid-cols-2 gap-y-1.5 gap-x-1 max-h-40 overflow-y-auto custom-scrollbar">
-                                {ALL_NUMBER_FORMATS.map(fmt => (
-                                  <label key={fmt.id} className="flex items-center gap-1.5 text-[9px] text-slate-300 cursor-pointer">
-                                    <input type="checkbox" checked={enabledFormats.includes(fmt.id)} onChange={() => setEnabledFormats(prev => prev.includes(fmt.id) ? prev.filter(id => id !== fmt.id) : [...prev, fmt.id])} className="accent-purple-500 w-3 h-3 shrink-0"/>
-                                    <span className="truncate">{fmt.label}</span>
-                                  </label>
-                                ))}
+                              <div className="pl-3 pr-2 py-2 bg-slate-900/50 rounded-b-xl border border-purple-500/50 border-t-0">
+                                {/* 全選択/全解除ボタン */}
+                                <div className="flex gap-1.5 mb-2">
+                                  <button
+                                    onClick={() => setEnabledFormats(ALL_NUMBER_FORMATS.map(f => f.id))}
+                                    className="flex-1 py-1 text-[8px] font-black bg-purple-700/40 hover:bg-purple-600/50 border border-purple-500/50 rounded-lg text-purple-200 transition-all active:scale-95"
+                                  >全選択</button>
+                                  <button
+                                    onClick={() => setEnabledFormats([])}
+                                    className="flex-1 py-1 text-[8px] font-black bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-lg text-slate-400 transition-all active:scale-95"
+                                  >全解除</button>
+                                </div>
+                                <div className="grid grid-cols-2 gap-y-1.5 gap-x-1 max-h-40 overflow-y-auto custom-scrollbar">
+                                  {ALL_NUMBER_FORMATS.map(fmt => (
+                                    <label key={fmt.id} className="flex items-center gap-1.5 text-[9px] text-slate-300 cursor-pointer">
+                                      <input type="checkbox" checked={enabledFormats.includes(fmt.id)} onChange={() => setEnabledFormats(prev => prev.includes(fmt.id) ? prev.filter(id => id !== fmt.id) : [...prev, fmt.id])} className="accent-purple-500 w-3 h-3 shrink-0"/>
+                                      <span className="truncate">{fmt.label}</span>
+                                    </label>
+                                  ))}
+                                </div>
                               </div>
                             )}
                           </div>
@@ -1940,7 +1953,10 @@ const App = () => {
                       {isSpecialMultiEnabled && (
                         <div className="bg-amber-950/30 border border-amber-500/30 border-t-0 rounded-b-xl px-3 py-2 flex items-center gap-2">
                           <span className="text-[9px] text-amber-400 font-bold">重複確率</span>
-                          <input type="number" min={1} max={100} value={specialMultiProb} onChange={e => setSpecialMultiProb(Math.max(1,Math.min(100,parseInt(e.target.value)||1)))} className="w-12 bg-slate-900 border border-amber-500/40 rounded-lg text-center text-[10px] font-black text-amber-300 outline-none px-1 py-0.5"/>
+                          <input type="number" min={1} max={100} value={specialMultiProb}
+                            onChange={e => setSpecialMultiProb(Math.max(1,Math.min(100,parseInt(e.target.value)||1)))}
+                            onKeyDown={e => { if (e.key === 'Enter') { const v = Math.max(1,Math.min(100,parseInt((e.target as HTMLInputElement).value)||1)); setSpecialMultiProb(v); (e.target as HTMLInputElement).blur(); } }}
+                            className="w-12 bg-slate-900 border border-amber-500/40 rounded-lg text-center text-[10px] font-black text-amber-300 outline-none px-1 py-0.5"/>
                           <span className="text-[9px] text-amber-500 font-bold">%</span>
                         </div>
                       )}
