@@ -1,4 +1,41 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, Component } from 'react';
+
+// ===== ErrorBoundary: JSエラー時に黒画面ではなくエラー画面を表示 =====
+interface EBState { hasError: boolean; error?: Error; }
+class ErrorBoundary extends Component<{ children: React.ReactNode }, EBState> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError(error: Error): EBState {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error('[ErrorBoundary] Caught error:', error, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ minHeight: '100vh', background: '#0f172a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2rem', fontFamily: 'sans-serif' }}>
+          <div style={{ background: '#1e293b', border: '1px solid #ef4444', borderRadius: '1.5rem', padding: '2.5rem', maxWidth: '480px', width: '100%', textAlign: 'center' }}>
+            <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>⚠️</div>
+            <h2 style={{ color: '#f87171', fontWeight: 900, fontSize: '1.25rem', marginBottom: '0.5rem' }}>エラーが発生しました</h2>
+            <p style={{ color: '#94a3b8', fontSize: '0.875rem', marginBottom: '1.5rem' }}>
+              {this.state.error?.message || '予期しないエラーが発生しました。'}
+            </p>
+            <button
+              onClick={() => { this.setState({ hasError: false, error: undefined }); }}
+              style={{ background: '#4f46e5', color: 'white', border: 'none', borderRadius: '0.75rem', padding: '0.75rem 2rem', fontWeight: 900, fontSize: '1rem', cursor: 'pointer' }}
+            >
+              ホームに戻る
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 import {
   Users, Heart, Skull, History, Swords, Trophy, RotateCcw, Play,
   Sparkles, Zap, Copy, Check, Clock, Settings2, Plus, Trash2,
@@ -650,16 +687,29 @@ const App = () => {
   }, [isMultiplayer, isSpinning, myUid, roomHostId, players, phase]);
 
   const syncSettingsFromRoom = (s: any) => {
-    setTitle(s.title || ''); setMode(s.mode); setTeamCount(s.teamCount); setTeamNames(s.teamNames);
-    setInitialHP(s.initialHP); setSpinDuration(s.spinDuration); setHealInterval(s.healInterval);
-    setIsHpBalanceEnabled(s.isHpBalanceEnabled); setIsSpecialEventEnabled(s.isSpecialEventEnabled);
-    setSpecialEventProb(s.specialEventProb); setEnabledSpecialEvents(s.enabledSpecialEvents);
+    if (!s) return;
+    // 基本設定（nullチェック付きでデフォルト値を使用）
+    setTitle(s.title || '');
+    setMode(s.mode || 'individual');
+    setTeamCount(s.teamCount ?? 2);
+    setTeamNames(s.teamNames || ['チームA','チームB','チームC','チームD','チームE','チームF']);
+    setInitialHP(s.initialHP ?? 1000);
+    setSpinDuration(s.spinDuration ?? 1.5);
+    setHealInterval(s.healInterval ?? 10);
+    setIsHpBalanceEnabled(s.isHpBalanceEnabled ?? true);
+    setIsSpecialEventEnabled(s.isSpecialEventEnabled ?? true);
+    setSpecialEventProb(s.specialEventProb ?? 25);
+    setEnabledSpecialEvents(s.enabledSpecialEvents || []);
     // diceConfigの後方互換性（旧形式 {min,max,diceCount} → 新形式 {minCount,maxCount,faceMin,faceMax}）
     if (s.diceConfig) {
       if ('minCount' in s.diceConfig) { setDiceConfig(s.diceConfig); }
       else { setDiceConfig({ minCount: s.diceConfig.diceCount||2, maxCount: s.diceConfig.diceCount||2, faceMin: s.diceConfig.min||1, faceMax: s.diceConfig.max||100 }); }
-    } setEnabledFormats(s.enabledFormats);
-    setConfig(s.config); setReviveEvents(s.reviveEvents);
+    }
+    if (s.enabledFormats) setEnabledFormats(s.enabledFormats);
+    // configはfixedItemsが必須なので、undefinedの場合はスキップ（デフォルト値を維持）
+    if (s.config && s.config.fixedItems) setConfig(s.config);
+    // reviveEventsはundefinedの場合は空配列で設定
+    setReviveEvents(Array.isArray(s.reviveEvents) ? s.reviveEvents : []);
     if (s.isBarrierEventEnabled !== undefined) setIsBarrierEventEnabled(s.isBarrierEventEnabled);
     if (s.isSpecialMultiEnabled !== undefined) setIsSpecialMultiEnabled(s.isSpecialMultiEnabled);
     if (s.specialMultiProb !== undefined) setSpecialMultiProb(s.specialMultiProb);
@@ -2496,3 +2546,10 @@ const App = () => {
 };
 
 export default App;
+
+// ===== ErrorBoundary でラップしたAppをエクスポート =====
+export const AppWithErrorBoundary = () => (
+  <ErrorBoundary>
+    <App />
+  </ErrorBoundary>
+);
