@@ -722,6 +722,8 @@ const App = () => {
 
   const totalProb = (parseInt(String(config.rangeProb)) || 0) +
     config.fixedItems.reduce((s, i) => s + (parseInt(String(i.prob)) || 0), 0);
+  // isHostはコンポーネントスコープで1度だけ定義（TDZ防止）
+  const isHost = isMultiplayer ? (myUid === roomHostId) : true;
   const isManualTurn = !isMultiplayer && isManualModeEnabled && ((turn >= 41 && turn <= 49) || (turn >= 51 && turn <= 60));
 
   useEffect(() => {
@@ -1751,7 +1753,7 @@ const App = () => {
   );
 
   if (phase === 'multi_lobby') {
-    const isHost = myUid === roomHostId;
+    const isHost2 = myUid === roomHostId;
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 p-4 md:p-6 flex flex-col items-center justify-center">
         <div className="bg-slate-900 rounded-[3rem] shadow-2xl border border-slate-800 w-full max-w-4xl p-6 md:p-10 flex flex-col h-[85vh]">
@@ -1767,7 +1769,7 @@ const App = () => {
           </div>
           <div className="text-[10px] font-black text-slate-500 tracking-widest uppercase mb-3 flex justify-between items-end">
             <span className="flex items-center gap-2"><Users size={14}/> 参加プレイヤー ({players.length})</span>
-            {isHost && mode === 'team' && <span className="text-amber-500">ドラッグ＆ドロップでチーム変更可能</span>}
+            {isHost2 && mode === 'team' && <span className="text-amber-500">ドラッグ＆ドロップでチーム変更可能</span>}
           </div>
           <div className="flex-1 overflow-y-auto custom-scrollbar border border-slate-800 rounded-3xl p-4 bg-slate-950 mb-6" onTouchMove={onTouchMove} onTouchEnd={onTouchEndLobby}>
             {mode === 'individual' ? (
@@ -1786,9 +1788,9 @@ const App = () => {
                     <h4 className="text-sm font-black text-indigo-400 uppercase tracking-widest mb-3">{teamNames[ti]||`チーム${String.fromCharCode(65+ti)}`}</h4>
                     <div className="min-h-[120px] flex flex-wrap gap-2 content-start">
                       {players.filter(p => p.teamIndex===ti).map(p => (
-                        <div key={p.id} draggable={isHost} onDragStart={e => onDragStart(e, p)} onTouchStart={e => onTouchStart(e, p)}
-                          className={`bg-slate-950 px-4 py-2.5 rounded-xl border border-slate-800 font-bold text-sm flex items-center gap-2 ${isHost ? 'cursor-grab active:cursor-grabbing hover:border-slate-600' : ''} ${p.uid===roomHostId ? 'text-indigo-300' : 'text-slate-200'}`}>
-                          {isHost && <GripVertical size={14} className="text-slate-600"/>} {p.uid===roomHostId && <Trophy size={12} className="text-amber-400"/>} {p.name}
+                        <div key={p.id} draggable={isHost2} onDragStart={e => onDragStart(e, p)} onTouchStart={e => onTouchStart(e, p)}
+                          className={`bg-slate-950 px-4 py-2.5 rounded-xl border border-slate-800 font-bold text-sm flex items-center gap-2 ${isHost2 ? 'cursor-grab active:cursor-grabbing hover:border-slate-600' : ''} ${p.uid===roomHostId ? 'text-indigo-300' : 'text-slate-200'}`}>
+                          {isHost2 && <GripVertical size={14} className="text-slate-600"/>} {p.uid===roomHostId && <Trophy size={12} className="text-amber-400"/>} {p.name}
                         </div>
                       ))}
                       {players.filter(p => p.teamIndex===ti).length === 0 && <div className="text-[10px] font-black text-slate-700 uppercase italic py-2 w-full text-center">Empty</div>}
@@ -1799,7 +1801,7 @@ const App = () => {
             )}
           </div>
           <div className="shrink-0 space-y-3">
-            {isHost && (
+            {isHost2 && (
               <div className="flex items-center justify-center gap-3 w-full max-w-md mx-auto">
                 {/* 観戦モード切り替えボタン（ロビー：参加/不参加） */}
                 <button
@@ -1835,7 +1837,7 @@ const App = () => {
               </div>
             )}
             <div className="text-center">
-              {isHost ? (
+              {isHost2 ? (
                 <button onClick={startMultiplayerGame} disabled={players.length < 2} className={`w-full max-w-md mx-auto py-5 rounded-2xl font-black text-2xl transition-all shadow-2xl flex items-center justify-center gap-3 ${players.length >= 2 ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/30' : 'bg-slate-800 text-slate-600 border border-slate-700'}`}>
                   {players.length >= 2 ? <><Play fill="currentColor"/> ゲームスタート</> : '参加者を待っています...'}
                 </button>
@@ -2226,8 +2228,6 @@ const App = () => {
 
   const survivorsSorted = players.filter(p => p.status === 'alive').sort((a,b) => b.hp - a.hp);
   const totalSurvivorHp = survivorsSorted.reduce((s,p) => s + p.hp, 0);
-  const isHost = isMultiplayer ? (myUid === roomHostId) : true;
-
   // ダイス表示かどうか
   const isDiceDisplay = typeof displayResult.amount === 'string' && String(displayResult.amount).includes('[') && String(displayResult.amount).includes('d');
 
