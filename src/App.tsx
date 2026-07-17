@@ -450,6 +450,8 @@ const App = () => {
   const [quizLoading, setQuizLoading] = useState(false);
   const [quizCurrentQ, setQuizCurrentQ] = useState(0); // 自分が今見ている問題番号（0-4）
   const [myQuizAnswers, setMyQuizAnswers] = useState<(number|null)[]>([null,null,null,null,null]);
+  // クイズ重複防止: 同一ゲームセッション内で使用済みクイズ種別を記録
+  const [usedQuizTypes, setUsedQuizTypes] = useState<string[]>([]);
   const [multiEventEnabled, setMultiEventEnabled] = useState({
     russian_roulette: true,
     bomb: true,
@@ -1211,7 +1213,18 @@ const App = () => {
     const enabled = Object.entries(multiEventEnabled).filter(([,v]) => v).map(([k]) => k);
     if (enabled.length === 0) return;
     if (Math.random() * 100 > multiEventProb) return;
-    const chosen = enabled[Math.floor(Math.random() * enabled.length)] as MultiEventType;
+
+    // クイズ同士の重複防止: 既に使用済みのクイズ種別を候補から除外
+    const quizTypes = ['kanji_quiz', 'math_quiz', 'english_quiz'];
+    const available = enabled.filter(k => {
+      if (quizTypes.includes(k)) return !usedQuizTypes.includes(k);
+      return true;
+    });
+    // 利用可能なイベントがなければ（全クイズ使用済みなど）非クイズのみで再試行
+    const pool = available.length > 0 ? available : enabled.filter(k => !quizTypes.includes(k));
+    if (pool.length === 0) return;
+
+    const chosen = pool[Math.floor(Math.random() * pool.length)] as MultiEventType;
     setMultiEventDamage(damage);
     setMultiEventTargets(targets);
     if (chosen === 'russian_roulette') {
@@ -1240,6 +1253,8 @@ const App = () => {
       }, 1000);
       setBombInterval(iv);
     } else if (chosen === 'kanji_quiz' || chosen === 'math_quiz' || chosen === 'english_quiz') {
+      // クイズ重複防止: 使用済みに追加
+      setUsedQuizTypes(prev => [...prev, chosen]);
       setQuizLoading(true); setQuizCurrentQ(0);
       setMyQuizAnswers([null,null,null,null,null]);
       setQuizAnswers({});
@@ -1259,8 +1274,24 @@ const App = () => {
     setMultiEventPhase(chosen);
   };
 
-  // クイズ問題生成（ビルトイン問題バンク使用）
+  // クイズ問題生成（AI API → フォールバック: ビルトイン問題バンク）
   const fetchQuizQuestions = async (type: string): Promise<{q:string;choices:string[];answer:number}[]> => {
+    // AI APIを試みる
+    try {
+      const res = await fetch(`${API_BASE}/api/quiz/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.questions && Array.isArray(data.questions) && data.questions.length >= 5) {
+          return data.questions.slice(0, 5);
+        }
+      }
+    } catch { /* AI失敗時はフォールバックへ */ }
+
+    // フォールバック: ビルトイン問題バンク
     if (type === 'kanji_quiz') {
       const bank = [
         {q:'「薔薇」の読み方は？', choices:['ばら','はな','くさ','うめ'], answer:0},
@@ -1577,6 +1608,7 @@ const App = () => {
     })));
     setPhase('playing'); setTurn(1); setEliminated([]); setLogs([]); setLastResult(null);
     setActiveNumberFormat('default');
+    setUsedQuizTypes([]); // クイズ重複防止リセット
     setIsManualSelectionPhase(false); setSelectedPlayerIds([]);
   };
 
@@ -1584,6 +1616,7 @@ const App = () => {
     if (!currentRoomId) return;
     const colors = ['text-red-400','text-blue-400','text-emerald-400','text-amber-400','text-purple-400','text-cyan-400'];
     try {
+      setUsedQuizTypes([]); // クイズ重複防止リセット
       await API.patchRoom(currentRoomId, {
         status: 'playing',
         players: players.map(p => ({ ...p, teamColor: mode === 'team' ? colors[(p.teamIndex||0) % colors.length] : null })),

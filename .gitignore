@@ -1,33 +1,28 @@
-# prod (GitHub Pages用にdistはpush対象のためコメントアウト)
-# dist/
-
-# dev
-.yarn/
-!.yarn/releases
-.vscode/*
-!.vscode/launch.json
 !.vscode/*.code-snippets
-.idea/workspace.xml
-.idea/usage.statistics.xml
-.idea/shelf
-
+!.vscode/launch.json
+!.yarn/releases
 # deps
-node_modules/
-.wrangler
-
+# dev
+# dist/
 # env
+# logs
+# misc
+# prod (GitHub Pages用にdistはpush対象のためコメントアウト)
+*.log
+.DS_Store
+.dev.vars
 .env
 .env.production
-.dev.vars
-
-# logs
+.idea/shelf
+.idea/usage.statistics.xml
+.idea/workspace.xml
+.vscode/*
+.wrangler
+.yarn/
+lerna-debug.log*
 logs/
-*.log
+node_modules/
 npm-debug.log*
+pnpm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
-
-# misc
-.DS_Store
