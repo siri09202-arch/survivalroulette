@@ -460,6 +460,8 @@ const App = () => {
     english_quiz: true
   });
   const [multiEventProb, setMultiEventProb] = useState(20); // マルチイベント発動確率
+  // クイズ難易度設定（複数選択可）
+  const [quizDifficulty, setQuizDifficulty] = useState<string[]>(['easy', 'medium', 'hard']);
 
   // numberFormat は spinRoulette 内でローカル変数として使うため
   // state は「表示バッジ用」のみ
@@ -717,6 +719,7 @@ const App = () => {
     if (s.specialMultiProb !== undefined) setSpecialMultiProb(s.specialMultiProb);
     if (s.multiEventEnabled !== undefined) setMultiEventEnabled(s.multiEventEnabled);
     if (s.multiEventProb !== undefined) setMultiEventProb(s.multiEventProb);
+    if (s.quizDifficulty !== undefined) setQuizDifficulty(s.quizDifficulty);
   };
 
   const toggleSpecialEvent = (type: string) =>
@@ -1281,7 +1284,7 @@ const App = () => {
       const res = await fetch(`${API_BASE}/api/quiz/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type })
+        body: JSON.stringify({ type, difficulty: quizDifficulty })
       });
       if (res.ok) {
         const data = await res.json();
@@ -1560,7 +1563,7 @@ const App = () => {
           isHpBalanceEnabled, isSpecialEventEnabled, specialEventProb, enabledSpecialEvents,
           diceConfig, enabledFormats, config, reviveEvents,
           isBarrierEventEnabled, isSpecialMultiEnabled, specialMultiProb,
-          multiEventEnabled, multiEventProb },
+          multiEventEnabled, multiEventProb, quizDifficulty },
         players: [],
         gameState: { turn: 1, logs: [], eliminated: [], isSpinning: false,
           displayResult: { player: '\uff1f\uff1f\uff1f', amount: '\uff1f' }, lastResult: null }
@@ -2071,11 +2074,34 @@ const App = () => {
                         {key:'math_quiz',        icon:'➕', label:'計算クイズ'},
                         {key:'english_quiz',     icon:'🔤', label:'英単語クイズ'},
                       ] as const).map(ev => (
-                        <button key={ev.key} onClick={() => setMultiEventEnabled(prev => ({...prev, [ev.key]: !prev[ev.key]}))}
-                          className={`w-full px-3 py-2 rounded-xl border flex items-center justify-between transition-all text-[9px] font-bold ${multiEventEnabled[ev.key] ? 'bg-rose-900/20 border-rose-500/40 text-rose-200' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>
-                          <span className="flex items-center gap-2">{ev.icon} {ev.label}</span>
-                          <div className={`w-2 h-2 rounded-full ${multiEventEnabled[ev.key] ? 'bg-rose-400 shadow-[0_0_6px_rgba(251,113,133,0.6)]' : 'bg-slate-700'}`}/>
-                        </button>
+                        <div key={ev.key}>
+                          <button onClick={() => setMultiEventEnabled(prev => ({...prev, [ev.key]: !prev[ev.key]}))}
+                            className={`w-full px-3 py-2 rounded-xl border flex items-center justify-between transition-all text-[9px] font-bold ${multiEventEnabled[ev.key] ? 'bg-rose-900/20 border-rose-500/40 text-rose-200' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>
+                            <span className="flex items-center gap-2">{ev.icon} {ev.label}</span>
+                            <div className={`w-2 h-2 rounded-full ${multiEventEnabled[ev.key] ? 'bg-rose-400 shadow-[0_0_6px_rgba(251,113,133,0.6)]' : 'bg-slate-700'}`}/>
+                          </button>
+                          {multiEventEnabled[ev.key] && (ev.key === 'kanji_quiz' || ev.key === 'math_quiz' || ev.key === 'english_quiz') && (
+                            <div className="mt-1 ml-2 flex items-center gap-1 flex-wrap">
+                              <span className="text-[8px] text-slate-500 mr-0.5">難易度:</span>
+                              {([
+                                {id:'easy',   label:'やさしい', on:'text-emerald-300 border-emerald-600 bg-emerald-900/30', off:'text-slate-600 border-slate-800 bg-slate-900'},
+                                {id:'medium', label:'ふつう',     on:'text-amber-300   border-amber-600   bg-amber-900/30',   off:'text-slate-600 border-slate-800 bg-slate-900'},
+                                {id:'hard',   label:'むずかしい', on:'text-orange-300  border-orange-600  bg-orange-900/30',  off:'text-slate-600 border-slate-800 bg-slate-900'},
+                                {id:'expert', label:'激ムズ',     on:'text-red-300     border-red-600     bg-red-900/30',     off:'text-slate-600 border-slate-800 bg-slate-900'},
+                              ] as const).map(d => (
+                                <button key={d.id}
+                                  onClick={() => setQuizDifficulty(prev =>
+                                    prev.includes(d.id)
+                                      ? (prev.length > 1 ? prev.filter(x => x !== d.id) : prev)
+                                      : [...prev, d.id]
+                                  )}
+                                  className={`px-2 py-0.5 rounded-lg border text-[8px] font-black transition-all ${quizDifficulty.includes(d.id) ? d.on : d.off}`}>
+                                  {d.label}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       ))}
                     </div>
                   )}

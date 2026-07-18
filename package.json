@@ -10,6 +10,7 @@
     "cf-typegen": "wrangler types --env-interface CloudflareBindings"
   },
   "dependencies": {
+    "@hono/node-server": "^2.0.10",
     "firebase": "^12.14.0",
     "hono": "^4.12.23",
     "lucide-react": "^1.18.0",
