@@ -104,21 +104,25 @@ app.patch('/api/rooms/:roomId', async (c) => {
 app.post('/api/quiz/generate', async (c) => {
   const { type, difficulty } = await c.req.json()
 
-  // APIキーを.dev.varsまたは環境変数から取得
-  let apiKey = process.env.OPENAI_API_KEY || ''
-  let baseUrl = process.env.OPENAI_BASE_URL || 'https://www.genspark.ai/api/llm_proxy/v1'
+  // APIキーを.dev.varsファイルから優先取得（環境変数より新鮮なトークンが入っている場合のため）
+  let apiKey = ''
+  let baseUrl = 'https://www.genspark.ai/api/llm_proxy/v1'
 
-  // .dev.varsファイルから読み込み（環境変数が未設定の場合）
-  if (!apiKey) {
-    try {
-      const devVarsPath = path.join(__dirname, '.dev.vars')
-      const content = fs.readFileSync(devVarsPath, 'utf-8')
-      for (const line of content.split('\n')) {
-        const [k, ...v] = line.split('=')
-        if (k?.trim() === 'OPENAI_API_KEY') apiKey = v.join('=').trim()
-        if (k?.trim() === 'OPENAI_BASE_URL') baseUrl = v.join('=').trim()
-      }
-    } catch {}
+  // まず.dev.varsファイルから読み込み
+  try {
+    const devVarsPath = path.join(__dirname, '.dev.vars')
+    const content = fs.readFileSync(devVarsPath, 'utf-8')
+    for (const line of content.split('\n')) {
+      const [k, ...v] = line.split('=')
+      if (k?.trim() === 'OPENAI_API_KEY') apiKey = v.join('=').trim()
+      if (k?.trim() === 'OPENAI_BASE_URL') baseUrl = v.join('=').trim()
+    }
+  } catch {}
+
+  // .dev.varsにない場合は環境変数にフォールバック
+  if (!apiKey) apiKey = process.env.OPENAI_API_KEY || ''
+  if (baseUrl === 'https://www.genspark.ai/api/llm_proxy/v1' && process.env.OPENAI_BASE_URL) {
+    baseUrl = process.env.OPENAI_BASE_URL
   }
 
   if (!apiKey) return c.json({ error: 'NO_API_KEY' }, 500)
