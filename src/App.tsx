@@ -460,8 +460,12 @@ const App = () => {
     english_quiz: true
   });
   const [multiEventProb, setMultiEventProb] = useState(20); // マルチイベント発動確率
-  // クイズ難易度設定（複数選択可）
-  const [quizDifficulty, setQuizDifficulty] = useState<string[]>(['easy', 'medium', 'hard']);
+  // クイズ難易度設定（各クイズ個別・複数選択可）
+  const [quizDifficultyMap, setQuizDifficultyMap] = useState<Record<string, string[]>>({
+    kanji_quiz:   ['easy', 'medium', 'hard'],
+    math_quiz:    ['easy', 'medium', 'hard'],
+    english_quiz: ['easy', 'medium', 'hard'],
+  });
 
   // numberFormat は spinRoulette 内でローカル変数として使うため
   // state は「表示バッジ用」のみ
@@ -719,7 +723,11 @@ const App = () => {
     if (s.specialMultiProb !== undefined) setSpecialMultiProb(s.specialMultiProb);
     if (s.multiEventEnabled !== undefined) setMultiEventEnabled(s.multiEventEnabled);
     if (s.multiEventProb !== undefined) setMultiEventProb(s.multiEventProb);
-    if (s.quizDifficulty !== undefined) setQuizDifficulty(s.quizDifficulty);
+    if (s.quizDifficultyMap !== undefined) setQuizDifficultyMap(s.quizDifficultyMap);
+    else if (s.quizDifficulty !== undefined) {
+      // 旧データ互換: 共通difficultyを全クイズに適用
+      setQuizDifficultyMap({ kanji_quiz: s.quizDifficulty, math_quiz: s.quizDifficulty, english_quiz: s.quizDifficulty });
+    }
   };
 
   const toggleSpecialEvent = (type: string) =>
@@ -728,7 +736,8 @@ const App = () => {
   const totalProb = (parseInt(String(config.rangeProb)) || 0) +
     config.fixedItems.reduce((s, i) => s + (parseInt(String(i.prob)) || 0), 0);
   // isHostはコンポーネントスコープで1度だけ定義（TDZ防止）
-  const isHost = isMultiplayer ? (myUid === roomHostId) : true;
+  // setup フェーズ（roomHostId=null）もホスト扱いとする
+  const isHost = isMultiplayer ? (roomHostId === null || myUid === roomHostId) : true;
   const isManualTurn = !isMultiplayer && isManualModeEnabled && ((turn >= 41 && turn <= 49) || (turn >= 51 && turn <= 60));
 
   useEffect(() => {
@@ -1284,7 +1293,7 @@ const App = () => {
       const res = await fetch(`${API_BASE}/api/quiz/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type, difficulty: quizDifficulty })
+        body: JSON.stringify({ type, difficulty: quizDifficultyMap[type] ?? ['easy', 'medium', 'hard'] })
       });
       if (res.ok) {
         const data = await res.json();
@@ -1563,7 +1572,7 @@ const App = () => {
           isHpBalanceEnabled, isSpecialEventEnabled, specialEventProb, enabledSpecialEvents,
           diceConfig, enabledFormats, config, reviveEvents,
           isBarrierEventEnabled, isSpecialMultiEnabled, specialMultiProb,
-          multiEventEnabled, multiEventProb, quizDifficulty },
+          multiEventEnabled, multiEventProb, quizDifficultyMap },
         players: [],
         gameState: { turn: 1, logs: [], eliminated: [], isSpinning: false,
           displayResult: { player: '\uff1f\uff1f\uff1f', amount: '\uff1f' }, lastResult: null }
@@ -2090,12 +2099,16 @@ const App = () => {
                                 {id:'expert', label:'激ムズ',     on:'text-red-300     border-red-600     bg-red-900/30',     off:'text-slate-600 border-slate-800 bg-slate-900'},
                               ] as const).map(d => (
                                 <button key={d.id}
-                                  onClick={() => setQuizDifficulty(prev =>
-                                    prev.includes(d.id)
-                                      ? (prev.length > 1 ? prev.filter(x => x !== d.id) : prev)
-                                      : [...prev, d.id]
-                                  )}
-                                  className={`px-2 py-0.5 rounded-lg border text-[8px] font-black transition-all ${quizDifficulty.includes(d.id) ? d.on : d.off}`}>
+                                  onClick={() => setQuizDifficultyMap(prev => {
+                                    const cur = prev[ev.key] ?? ['easy', 'medium', 'hard'];
+                                    const next = cur.includes(d.id)
+                                      ? (cur.length > 1 ? cur.filter(x => x !== d.id) : cur)
+                                      : [...cur, d.id];
+                                    return { ...prev, [ev.key]: next };
+                                  })}
+                                  className={`px-2 py-0.5 rounded-lg border text-[8px] font-black transition-all ${
+                                    (quizDifficultyMap[ev.key] ?? ['easy','medium','hard']).includes(d.id) ? d.on : d.off
+                                  }`}>
                                   {d.label}
                                 </button>
                               ))}
