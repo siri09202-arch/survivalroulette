@@ -93,6 +93,23 @@ interface EliminatedPlayer { name: string; turn: number; }
 interface LogEntry { id: number; turn: number; type: string; message: string; amount?: string | number; target?: string; }
 interface DisplayResult { player: string; amount: string | number; }
 interface LastResult { player: string; targetIds: string[]; amount: string | number; type: string; isReverse?: boolean; isMulti?: boolean; }
+// マルチイベント同期用インターフェース
+interface MultiEventState {
+  phase: 'russian_roulette' | 'bomb' | 'kanji_quiz' | 'math_quiz' | 'english_quiz' | null;
+  damage: number;
+  targetIds: string[]; // 対象プレイヤーID一覧
+  // ロシアンルーレット
+  rrChamber?: number;
+  rrCurrent?: number;
+  rrTurnIndex?: number;
+  rrHit?: string[];
+  // 爆弾
+  bombData?: {playerId:string;wires:number;cutWire:number;timeLeft:number;status:'active'|'cut'|'exploded'|'wrong'}[];
+  // クイズ
+  quizQuestions?: {q:string;choices:string[];answer:number}[];
+  quizAnswers?: Record<string,number[]>;
+  quizTimeLeft?: number;
+}
 interface FixedItem { id: number; value: number; prob: number; }
 interface Config { rangeMin: number; rangeMax: number; rangeProb: number; fixedItems: FixedItem[]; }
 interface ReviveEvent { id: number; turn: number; type: 'steal' | 'copy'; }
@@ -650,6 +667,39 @@ const App = () => {
           setLogs(data.gameState.logs); setEliminated(data.gameState.eliminated);
           setIsSpinning(data.gameState.isSpinning);
           setDisplayResult(data.gameState.displayResult); setLastResult(data.gameState.lastResult);
+          // マルチイベント状態の同期（非ホスト用）
+          if (myUid !== data.hostId) {
+            const me = data.gameState.multiEvent;
+            if (me && me.phase) {
+              const myPlayer = data.players.find((p: Player) => p.uid === myUid);
+              const isTarget = myPlayer && me.targetIds.includes(myPlayer.id);
+              if (isTarget) {
+                setMultiEventPhase(me.phase);
+                setMultiEventDamage(me.damage);
+                setMultiEventTargets(data.players.filter((p: Player) => me.targetIds.includes(p.id)));
+                if (me.phase === 'russian_roulette') {
+                  setRrChamber(me.rrChamber ?? 0);
+                  setRrCurrent(me.rrCurrent ?? 0);
+                  setRrTurnIndex(me.rrTurnIndex ?? 0);
+                  setRrHit(me.rrHit ?? []);
+                } else if (me.phase === 'bomb') {
+                  setBombData(me.bombData ?? []);
+                } else if (me.phase === 'kanji_quiz' || me.phase === 'math_quiz' || me.phase === 'english_quiz') {
+                  if (me.quizQuestions && me.quizQuestions.length > 0) {
+                    setQuizQuestions(me.quizQuestions);
+                    setQuizLoading(false);
+                  }
+                  setQuizAnswers(me.quizAnswers ?? {});
+                  setQuizTimeLeft(me.quizTimeLeft ?? 60);
+                }
+              } else {
+                // 対象外のプレイヤーはモーダルを閉じる
+                setMultiEventPhase(prev => prev ? null : prev);
+              }
+            } else if (!me || !me.phase) {
+              setMultiEventPhase(null);
+            }
+          }
         }
         if (data.status === 'result') {
           setPhase(prev => prev !== 'result' ? 'result' : prev);
@@ -1188,6 +1238,10 @@ const App = () => {
       try {
         const afterAlive = updatedPlayers.filter(p => p.status === 'alive');
         const isFinished = mode === 'team' ? new Set(afterAlive.map(p => p.team)).size <= 1 : afterAlive.length <= 1;
+        // アニメーション開始（シングルと同じタイミング）
+        setAnimatingPlayerIds(targetIds);
+        setAnimatingType(effectType);
+        setTimeout(() => { setAnimatingPlayerIds([]); setAnimatingType(null); }, 2000);
         await API.patchRoom(currentRoomId, {
           players: updatedPlayers,
           'gameState.turn': isFinished ? turn : turn + 1,
@@ -1198,12 +1252,15 @@ const App = () => {
           'gameState.lastResult': { player: chosenPlayer.name, targetIds, amount: finalAmount, type: effectType, isReverse, isMulti },
           ...(isFinished ? { status: 'result' } : {})
         });
-        setIsSpinning(false);
-        // マルチイベント発動判定（ダメージターンのみ、ゲーム終了でない場合）
-        if (!isFinished && effectType === 'damage') {
-          const targets = updatedPlayers.filter(p => targetIds.includes(p.id) && p.status === 'alive');
-          setTimeout(() => triggerMultiEvent(finalAmount as number, targets), 500);
-        }
+        // シングルと同じ1500ms後に後処理
+        setTimeout(() => {
+          setIsSpinning(false);
+          // マルチイベント発動判定（ダメージターンのみ、ゲーム終了でない場合）
+          if (!isFinished && effectType === 'damage') {
+            const targets = updatedPlayers.filter(p => targetIds.includes(p.id) && p.status === 'alive');
+            triggerMultiEvent(finalAmount as number, targets);
+          }
+        }, 1500);
       } catch { setIsSpinning(false); }
     } else {
       setPlayers(updatedPlayers);
@@ -1214,14 +1271,30 @@ const App = () => {
         setIsSpinning(false);
         const afterAlive = updatedPlayers.filter(p => p.status === 'alive');
         const isFinished = mode === 'team' ? new Set(afterAlive.map(p => p.team)).size <= 1 : afterAlive.length <= 1;
-        if (isFinished) setPhase('result'); else setTurn(t => t + 1);
+        if (isFinished) {
+          setPhase('result');
+        } else {
+          setTurn(t => t + 1);
+          // シングルプレイのマルチイベント発動
+          if (effectType === 'damage' && isSpecialEventEnabled) {
+            const targets = updatedPlayers.filter(p => targetIds.includes(p.id) && p.status === 'alive');
+            if (targets.length > 0) triggerMultiEvent(finalAmount as number, targets);
+          }
+        }
       }, 1500);
     }
   };
 
   // ===== マルチイベント: ルーレット結果を元にイベント発動 =====
-  const triggerMultiEvent = (damage: number, targets: Player[]) => {
-    if (!isMultiplayer || !isHost || targets.length === 0) return;
+  const triggerMultiEvent = async (damage: number, targets: Player[]) => {
+    if (targets.length === 0) return;
+    // シングルプレイ判定
+    if (!isMultiplayer) {
+      _startMultiEventLocal(damage, targets);
+      return;
+    }
+    // マルチプレイ: ホストのみが発動可
+    if (!isHost) return;
     const enabled = Object.entries(multiEventEnabled).filter(([,v]) => v).map(([k]) => k);
     if (enabled.length === 0) return;
     if (Math.random() * 100 > multiEventProb) return;
@@ -1232,7 +1305,89 @@ const App = () => {
       if (quizTypes.includes(k)) return !usedQuizTypes.includes(k);
       return true;
     });
-    // 利用可能なイベントがなければ（全クイズ使用済みなど）非クイズのみで再試行
+    const pool = available.length > 0 ? available : enabled.filter(k => !quizTypes.includes(k));
+    if (pool.length === 0) return;
+
+    const chosen = pool[Math.floor(Math.random() * pool.length)] as MultiEventType;
+    const targetIds = targets.map(p => p.id);
+
+    // ホスト自身が対象かどうかチェック
+    const myPlayer = players.find(p => p.uid === myUid);
+    const hostIsTarget = myPlayer ? targetIds.includes(myPlayer.id) : false;
+
+    let meState: MultiEventState = { phase: chosen, damage, targetIds };
+
+    if (chosen === 'russian_roulette') {
+      const chamber = Math.floor(Math.random() * 6);
+      meState = { ...meState, rrChamber: chamber, rrCurrent: 0, rrTurnIndex: 0, rrHit: [] };
+      setRrChamber(chamber); setRrCurrent(0); setRrTurnIndex(0); setRrHit([]);
+    } else if (chosen === 'bomb') {
+      const bombDataInit = targets.map(p => ({
+        playerId: p.id,
+        wires: Math.floor(Math.random() * 10) + 1,
+        cutWire: Math.floor(Math.random() * 10),
+        timeLeft: 60,
+        status: 'active' as const
+      }));
+      meState = { ...meState, bombData: bombDataInit };
+      setBombData(bombDataInit);
+      if (bombInterval) clearInterval(bombInterval);
+      const iv = setInterval(() => {
+        setBombData(prev => {
+          const updated = prev.map(b => b.status === 'active' ? {...b, timeLeft: b.timeLeft - 1} : b);
+          if (updated.some(b => b.status === 'active' && b.timeLeft <= 0)) {
+            clearInterval(iv);
+            return updated.map(b => b.status === 'active' && b.timeLeft <= 0 ? {...b, status: 'exploded' as const} : b);
+          }
+          return updated;
+        });
+      }, 1000);
+      setBombInterval(iv);
+    } else if (chosen === 'kanji_quiz' || chosen === 'math_quiz' || chosen === 'english_quiz') {
+      setUsedQuizTypes(prev => [...prev, chosen]);
+      setQuizLoading(true); setQuizCurrentQ(0);
+      setMyQuizAnswers([null,null,null,null,null]);
+      setQuizAnswers({});
+      const qs = await fetchQuizQuestions(chosen);
+      meState = { ...meState, quizQuestions: qs, quizAnswers: {}, quizTimeLeft: 60 };
+      setQuizQuestions(qs); setQuizLoading(false);
+      setQuizTimeLeft(60);
+      if (quizInterval) clearInterval(quizInterval);
+      const iv = setInterval(() => {
+        setQuizTimeLeft(t => { if (t <= 1) { clearInterval(iv); return 0; } return t - 1; });
+      }, 1000);
+      setQuizInterval(iv);
+    }
+
+    // KVにマルチイベント状態を保存（全クライアントに同期）
+    if (currentRoomId) {
+      try {
+        await API.patchRoom(currentRoomId, { 'gameState.multiEvent': meState });
+      } catch {}
+    }
+
+    // ホストが対象の場合だけホスト自身にもモーダルを表示
+    setMultiEventDamage(damage);
+    setMultiEventTargets(targets);
+    if (hostIsTarget) {
+      setMultiEventPhase(chosen);
+    } else {
+      // ホストが対象外の場合はホスト管理モーダル（全員の状況を見れる観戦UI）を表示
+      setMultiEventPhase(chosen);
+    }
+  };
+
+  // ===== シングルプレイ用マルチイベント発動（ローカル処理） =====
+  const _startMultiEventLocal = (damage: number, targets: Player[]) => {
+    const enabled = Object.entries(multiEventEnabled).filter(([,v]) => v).map(([k]) => k);
+    if (enabled.length === 0) return;
+    if (Math.random() * 100 > multiEventProb) return;
+
+    const quizTypes = ['kanji_quiz', 'math_quiz', 'english_quiz'];
+    const available = enabled.filter(k => {
+      if (quizTypes.includes(k)) return !usedQuizTypes.includes(k);
+      return true;
+    });
     const pool = available.length > 0 ? available : enabled.filter(k => !quizTypes.includes(k));
     if (pool.length === 0) return;
 
@@ -1240,13 +1395,13 @@ const App = () => {
     setMultiEventDamage(damage);
     setMultiEventTargets(targets);
     if (chosen === 'russian_roulette') {
-      const chamber = Math.floor(Math.random() * 6); // 0-5
+      const chamber = Math.floor(Math.random() * 6);
       setRrChamber(chamber); setRrCurrent(0); setRrTurnIndex(0); setRrHit([]);
     } else if (chosen === 'bomb') {
       const data = targets.map(p => ({
         playerId: p.id,
-        wires: Math.floor(Math.random() * 10) + 1, // 1-10本
-        cutWire: Math.floor(Math.random() * 10),    // 0-9番が正解
+        wires: Math.floor(Math.random() * 10) + 1,
+        cutWire: Math.floor(Math.random() * 10),
         timeLeft: 60,
         status: 'active' as const
       }));
@@ -1255,17 +1410,15 @@ const App = () => {
       const iv = setInterval(() => {
         setBombData(prev => {
           const updated = prev.map(b => b.status === 'active' ? {...b, timeLeft: b.timeLeft - 1} : b);
-          const anyExploded = updated.some(b => b.status === 'active' && b.timeLeft <= 0);
-          if (anyExploded) {
+          if (updated.some(b => b.status === 'active' && b.timeLeft <= 0)) {
             clearInterval(iv);
-            setBombData(updated.map(b => b.status === 'active' && b.timeLeft <= 0 ? {...b, status: 'exploded'} : b));
+            return updated.map(b => b.status === 'active' && b.timeLeft <= 0 ? {...b, status: 'exploded' as const} : b);
           }
           return updated;
         });
       }, 1000);
       setBombInterval(iv);
     } else if (chosen === 'kanji_quiz' || chosen === 'math_quiz' || chosen === 'english_quiz') {
-      // クイズ重複防止: 使用済みに追加
       setUsedQuizTypes(prev => [...prev, chosen]);
       setQuizLoading(true); setQuizCurrentQ(0);
       setMyQuizAnswers([null,null,null,null,null]);
@@ -1275,10 +1428,7 @@ const App = () => {
         setQuizTimeLeft(60);
         if (quizInterval) clearInterval(quizInterval);
         const iv = setInterval(() => {
-          setQuizTimeLeft(t => {
-            if (t <= 1) { clearInterval(iv); return 0; }
-            return t - 1;
-          });
+          setQuizTimeLeft(t => { if (t <= 1) { clearInterval(iv); return 0; } return t - 1; });
         }, 1000);
         setQuizInterval(iv);
       });
@@ -1360,7 +1510,18 @@ const App = () => {
 
   // マルチイベント: ダメージ適用（外部から呼ぶ共通関数）
   const applyMultiEventDamage = async (hitPlayerIds: string[]) => {
-    if (!currentRoomId) return;
+    setMultiEventPhase(null);
+    if (!isMultiplayer || !currentRoomId) {
+      // シングルプレイ: ローカルで処理
+      if (hitPlayerIds.length > 0) {
+        setPlayers(prev => prev.map(p => hitPlayerIds.includes(p.id)
+          ? {...p, hp: Math.max(0, p.hp - multiEventDamage)}
+          : p
+        ).map(p => p.status==='alive' && p.hp<=0 ? {...p, hp:0, status:'dead' as const} : p));
+      }
+      return;
+    }
+    // マルチプレイ: KVに反映してmultiEventをクリア
     const updated = players.map(p => hitPlayerIds.includes(p.id)
       ? {...p, hp: Math.max(0, p.hp - multiEventDamage)}
       : p
@@ -1369,35 +1530,49 @@ const App = () => {
     try {
       await API.patchRoom(currentRoomId, {
         players: updated,
+        'gameState.multiEvent': null,
         'gameState.logs': [...(newDead.map((d,i) => ({id:Date.now()+i, turn, type:'death', message:`${d.name}が脱落...`, target:d.name}))), ...logs].slice(0,100)
       });
     } catch {}
-    setMultiEventPhase(null);
   };
 
   // ロシアンルーレット: 引き金を引く
-  const pullTrigger = () => {
+  const pullTrigger = async () => {
     if (rrTurnIndex >= multiEventTargets.length) return;
     const current = rrCurrent;
     const fired = current === rrChamber;
     const target = multiEventTargets[rrTurnIndex];
     const nextCurrent = (current + 1) % 6;
+    const newHit = fired ? [...rrHit, target.id] : [...rrHit];
+    const nextTurnIndex = rrTurnIndex + 1;
+
     setRrCurrent(nextCurrent);
-    if (fired) {
-      setRrHit(prev => [...prev, target.id]);
-    }
-    if (rrTurnIndex + 1 >= multiEventTargets.length) {
+    if (fired) setRrHit(newHit);
+
+    if (nextTurnIndex >= multiEventTargets.length) {
       // 全員が引いた
-      const hits = fired ? [...rrHit, target.id] : [...rrHit];
-      setTimeout(() => applyMultiEventDamage(hits), 1200);
+      setTimeout(() => applyMultiEventDamage(newHit), 1200);
     } else {
-      setRrTurnIndex(prev => prev + 1);
+      setRrTurnIndex(nextTurnIndex);
+      // マルチプレイ: KVにRR状態を同期
+      if (isMultiplayer && currentRoomId) {
+        try {
+          await API.patchRoom(currentRoomId, {
+            'gameState.multiEvent': {
+              phase: 'russian_roulette',
+              damage: multiEventDamage,
+              targetIds: multiEventTargets.map(p => p.id),
+              rrChamber, rrCurrent: nextCurrent, rrTurnIndex: nextTurnIndex, rrHit: newHit
+            }
+          });
+        } catch {}
+      }
     }
   };
 
   // 爆弾: ワイヤーを切る
-  const cutWire = (playerId: string, wireIndex: number) => {
-    setBombData(prev => prev.map(b => {
+  const cutWire = async (playerId: string, wireIndex: number) => {
+    const newData = bombData.map(b => {
       if (b.playerId !== playerId || b.status !== 'active') return b;
       if (wireIndex === b.cutWire) {
         return {...b, status: 'cut' as const};
@@ -1405,7 +1580,25 @@ const App = () => {
         if (bombInterval) clearInterval(bombInterval);
         return {...b, status: 'wrong' as const};
       }
-    }));
+    });
+    setBombData(newData);
+    // マルチプレイ: KVにbombData状態を同期
+    if (isMultiplayer && currentRoomId) {
+      try {
+        await API.patchRoom(currentRoomId, {
+          'gameState.multiEvent': {
+            phase: 'bomb',
+            damage: multiEventDamage,
+            targetIds: multiEventTargets.map(p => p.id),
+            bombData: newData
+          }
+        });
+      } catch {}
+    }
+    // 全員終了したら自動で結果確定（爆発・切断完了）
+    if (newData.every(b => b.status !== 'active')) {
+      setTimeout(() => finalizeBomb(), 1000);
+    }
   };
 
   // 爆弾: 結果確定
@@ -1424,14 +1617,29 @@ const App = () => {
   };
 
   // クイズ: 提出
-  const submitQuiz = () => {
+  const submitQuiz = async () => {
     if (quizInterval) { clearInterval(quizInterval); setQuizInterval(null); }
     const myId = players.find(p => p.uid === myUid)?.id || '';
     const newAnswers = {...quizAnswers, [myId]: myQuizAnswers.map(a => a ?? -1)};
     setQuizAnswers(newAnswers);
-    // 全員提出済み or ホストが強制終了
-    const allDone = multiEventTargets.every(p => newAnswers[p.id]);
-    if (allDone || isHost) {
+
+    // マルチプレイ: 自分の回答をKVに同期
+    if (isMultiplayer && currentRoomId) {
+      try {
+        await API.patchRoom(currentRoomId, {
+          'gameState.multiEvent': {
+            phase: multiEventPhase,
+            damage: multiEventDamage,
+            targetIds: multiEventTargets.map(p => p.id),
+            quizQuestions, quizAnswers: newAnswers, quizTimeLeft
+          }
+        });
+      } catch {}
+    }
+
+    // 全員提出済みかどうか確認
+    const allDone = multiEventTargets.every(p => newAnswers[p.id] !== undefined);
+    if (allDone || !isMultiplayer) {
       const failedIds = multiEventTargets.filter(p => {
         const ans = newAnswers[p.id];
         if (!ans) return true; // 未回答はアウト
@@ -1480,10 +1688,28 @@ const App = () => {
 
   const getCombinedRanking = () => {
     const alive = players.filter(p => p.status === 'alive').sort((a, b) => b.hp - a.hp);
-    const dead = [...eliminated].reverse().map(e => {
-      const p = players.find(pl => pl.name === e.name);
-      return { ...p!, status: 'dead' as const, turn: e.turn };
-    });
+    // eliminatedはname基準で最後に脱落したエントリのみ残す（復活→再脱落で重複を防ぐ）
+    // 現在deadのプレイヤーだけを対象にする（復活して生存中の人はalive側に入る）
+    const deadPlayerIds = new Set(players.filter(p => p.status === 'dead').map(p => p.id));
+    // eliminatedを逆順にして、各プレイヤーの最後の脱落記録のみ取得
+    const seenNames = new Set<string>();
+    const latestEliminated: EliminatedPlayer[] = [];
+    for (const e of [...eliminated].reverse()) {
+      if (!seenNames.has(e.name)) {
+        seenNames.add(e.name);
+        latestEliminated.push(e);
+      }
+    }
+    // 現在deadのプレイヤーに絞ってdead配列を構築（生存復活者は除外）
+    const dead = latestEliminated
+      .filter(e => {
+        const p = players.find(pl => pl.name === e.name);
+        return p && deadPlayerIds.has(p.id);
+      })
+      .map(e => {
+        const p = players.find(pl => pl.name === e.name);
+        return { ...p!, status: 'dead' as const, turn: e.turn };
+      });
     return [...alive, ...dead];
   };
 
@@ -2470,12 +2696,44 @@ const App = () => {
       `}}/>
 
       {/* ===== マルチイベント モーダル ===== */}
-      {multiEventPhase && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-lg bg-slate-900 rounded-[2rem] border border-slate-700 shadow-2xl overflow-hidden">
+      {multiEventPhase && (() => {
+        // 自分のプレイヤー情報を取得
+        const myPlayer = players.find(p => p.uid === myUid);
+        // 自分が対象かどうか（シングルプレイは常にtrue）
+        const iAmTarget = !isMultiplayer || (myPlayer && multiEventTargets.some(t => t.id === myPlayer.id)) || false;
+        // ホストで対象外の場合は観戦UIを表示
+        const isHostObserver = isMultiplayer && isHost && !iAmTarget;
 
-            {/* ロシアンルーレット */}
-            {multiEventPhase === 'russian_roulette' && (
+        return (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-lg bg-slate-900 rounded-[2rem] border border-slate-700 shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto">
+
+            {/* ホスト観戦UI（対象外ホスト用） */}
+            {isHostObserver && (
+              <div className="p-6 text-center space-y-4">
+                <div className="text-3xl mb-2">👁️</div>
+                <h2 className="text-xl font-black text-white">マルチイベント発動中</h2>
+                <p className="text-slate-400 text-sm">
+                  {multiEventPhase === 'russian_roulette' ? '🔫 ロシアンルーレット'
+                    : multiEventPhase === 'bomb' ? '💣 時限爆弾解除'
+                    : multiEventPhase === 'kanji_quiz' ? '漢 漢字クイズ'
+                    : multiEventPhase === 'math_quiz' ? '➕ 計算クイズ'
+                    : '🔤 英単語クイズ'}
+                </p>
+                <div className="bg-slate-950 rounded-xl p-3 text-left space-y-1">
+                  {multiEventTargets.map(t => (
+                    <div key={t.id} className="text-sm font-bold text-slate-300 flex items-center gap-2">
+                      <span className="text-amber-400">→</span> {t.name}
+                    </div>
+                  ))}
+                </div>
+                <p className="text-slate-500 text-xs">参加者が操作中です...</p>
+                <button onClick={() => { applyMultiEventDamage([]); }} className="w-full py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 font-black text-sm rounded-xl transition-all">スキップ（強制終了）</button>
+              </div>
+            )}
+
+            {/* ロシアンルーレット（対象者のみ） */}
+            {multiEventPhase === 'russian_roulette' && (iAmTarget || !isMultiplayer) && (
               <div className="p-6 space-y-5">
                 <div className="text-center">
                   <div className="text-4xl mb-2">🔫</div>
@@ -2499,12 +2757,12 @@ const App = () => {
                         <span className="font-bold text-sm flex-1">{p.name}</span>
                         {isOut && <span className="text-red-400 font-black text-xs">💥 アウト</span>}
                         {done && !isOut && <span className="text-emerald-400 font-black text-xs">✓ セーフ</span>}
-                        {isMyTurn && isHost && (
+                        {isMyTurn && (p.uid === myUid || !isMultiplayer) && (
                           <button onClick={pullTrigger} className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white font-black text-sm rounded-xl transition-all active:scale-95">
                             🔫 引く
                           </button>
                         )}
-                        {isMyTurn && !isHost && <span className="text-amber-400 text-xs font-bold animate-pulse">ホスト待機中...</span>}
+                        {isMyTurn && isMultiplayer && p.uid !== myUid && <span className="text-amber-400 text-xs font-bold animate-pulse">{p.name}のターン...</span>}
                       </div>
                     );
                   })}
@@ -2515,8 +2773,8 @@ const App = () => {
               </div>
             )}
 
-            {/* 時限爆弾 */}
-            {multiEventPhase === 'bomb' && (
+            {/* 時限爆弾（対象者のみ） */}
+            {multiEventPhase === 'bomb' && (iAmTarget || !isMultiplayer) && (
               <div className="p-6 space-y-4">
                 <div className="text-center">
                   <div className="text-4xl mb-2">💣</div>
@@ -2554,16 +2812,17 @@ const App = () => {
                     );
                   })}
                 </div>
-                {isHost && (
+                {/* 全員解除完了 or 自分だけ自分の分が終わったら結果確定ボタン */}
+                {(bombData.every(b=>b.status!=='active') || !isMultiplayer) && (
                   <button onClick={finalizeBomb} className={`w-full py-3 font-black rounded-xl transition-all ${bombData.every(b=>b.status!=='active') ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-slate-800 text-slate-500 border border-slate-700'}`}>
-                    {bombData.every(b=>b.status!=='active') ? '結果確定' : '全員の解除を待機中...'}
+                    {bombData.every(b=>b.status!=='active') ? '結果確定' : '解除を待機中...'}
                   </button>
                 )}
               </div>
             )}
 
-            {/* クイズ（漢字/計算/英単語共通） */}
-            {(multiEventPhase === 'kanji_quiz' || multiEventPhase === 'math_quiz' || multiEventPhase === 'english_quiz') && (
+            {/* クイズ（漢字/計算/英単語共通）（対象者のみ） */}
+            {(multiEventPhase === 'kanji_quiz' || multiEventPhase === 'math_quiz' || multiEventPhase === 'english_quiz') && (iAmTarget || !isMultiplayer) && (
               <div className="p-6 space-y-4">
                 <div className="text-center">
                   <div className="text-4xl mb-2">
@@ -2612,7 +2871,8 @@ const App = () => {
 
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 };
