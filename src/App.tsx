@@ -47,17 +47,18 @@ import {
 // ===== ルームAPI ヘルパー =====
 // GitHub Pages上ではAPIが動かないため、window.__API_BASE__があればそれを使う
 declare global { interface Window { __API_BASE__?: string; } }
-const API_BASE = (typeof window !== 'undefined' && window.__API_BASE__) ? window.__API_BASE__ : '';
+// 毎回window.__API_BASE__を参照することで、スクリプトロード後にセットされた値も確実に使用
+const getApiBase = () => (typeof window !== 'undefined' && window.__API_BASE__) ? window.__API_BASE__ : '';
 
 const API = {
   getRoom: async (roomId: string) => {
-    const res = await fetch(`${API_BASE}/api/rooms/${roomId}`);
+    const res = await fetch(`${getApiBase()}/api/rooms/${roomId}`);
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json();
   },
   createRoom: async (data: any) => {
-    const res = await fetch(`${API_BASE}/api/rooms`, {
+    const res = await fetch(`${getApiBase()}/api/rooms`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -66,7 +67,7 @@ const API = {
     return res.json();
   },
   patchRoom: async (roomId: string, patch: any) => {
-    const res = await fetch(`${API_BASE}/api/rooms/${roomId}`, {
+    const res = await fetch(`${getApiBase()}/api/rooms/${roomId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch)
@@ -1510,7 +1511,7 @@ const App = () => {
   const fetchQuizQuestions = async (type: string): Promise<{q:string;choices:string[];answer:number}[]> => {
     // AI APIを試みる
     try {
-      const res = await fetch(`${API_BASE}/api/quiz/generate`, {
+      const res = await fetch(`${getApiBase()}/api/quiz/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type, difficulty: quizDifficultyMap[type] ?? ['easy', 'medium', 'hard'] })
