@@ -449,12 +449,12 @@ const App = () => {
   const [multiEventTargets, setMultiEventTargets] = useState<Player[]>([]);
   // 時限爆弾
   const [bombData, setBombData] = useState<{playerId:string;wires:number;cutWire:number;timeLeft:number;status:'active'|'cut'|'exploded'|'wrong'}[]>([]);
-  const [bombInterval, setBombInterval] = useState<ReturnType<typeof setInterval>|null>(null);
+  const bombIntervalRef = useRef<ReturnType<typeof setInterval>|null>(null); // useRefで管理（stateにするとクロージャ問題）
   // クイズ
   const [quizQuestions, setQuizQuestions] = useState<{q:string;choices:string[];answer:number}[]>([]);
   const [quizAnswers, setQuizAnswers] = useState<Record<string,number[]>>({}); // playerId -> 各問の回答index
   const [quizTimeLeft, setQuizTimeLeft] = useState(60);
-  const [quizInterval, setQuizInterval] = useState<ReturnType<typeof setInterval>|null>(null);
+  const quizIntervalRef = useRef<ReturnType<typeof setInterval>|null>(null); // useRefで管理（stateにするとクロージャ問題）
   const [quizLoading, setQuizLoading] = useState(false);
   const [quizCurrentQ, setQuizCurrentQ] = useState(0); // 自分が今見ている問題番号（0-4）
   const [myQuizAnswers, setMyQuizAnswers] = useState<(number|null)[]>([null,null,null,null,null]);
@@ -462,6 +462,10 @@ const App = () => {
   const [usedQuizTypes, setUsedQuizTypes] = useState<string[]>([]);
   // ホスト側クイズ結果処理の二重起動防止フラグ
   const quizFinalizingRef = useRef(false);
+  // 爆弾タイマー起動済みフラグ（非ホスト側の重複起動防止）
+  const bombTimerStartedRef = useRef(false);
+  // クイズタイマー起動済みフラグ（非ホスト側の重複起動防止）
+  const quizTimerStartedRef = useRef(false);
   const [multiEventEnabled, setMultiEventEnabled] = useState({
     bomb: true,
     kanji_quiz: true,
@@ -673,7 +677,21 @@ const App = () => {
                   setBombData(prev => {
                     const incoming = me.bombData ?? [];
                     if (prev.length === 0) {
-                      // 初回セット時: KVの値をそのまま使う
+                      // 初回セット: KVの値をそのまま使い、タイマーを起動
+                      if (!bombTimerStartedRef.current) {
+                        bombTimerStartedRef.current = true;
+                        if (bombIntervalRef.current) clearInterval(bombIntervalRef.current);
+                        bombIntervalRef.current = setInterval(() => {
+                          setBombData(prevData => {
+                            const upd = prevData.map(b => b.status === 'active' ? {...b, timeLeft: b.timeLeft - 1} : b);
+                            if (upd.some(b => b.status === 'active' && b.timeLeft <= 0)) {
+                              if (bombIntervalRef.current) { clearInterval(bombIntervalRef.current); bombIntervalRef.current = null; }
+                              return upd.map(b => b.status === 'active' && b.timeLeft <= 0 ? {...b, status: 'exploded' as const} : b);
+                            }
+                            return upd;
+                          });
+                        }, 1000);
+                      }
                       return incoming;
                     }
                     // 2回目以降: statusの変化だけKVから反映し、timeLeftはローカルを維持
@@ -684,21 +702,6 @@ const App = () => {
                       return b;
                     });
                   });
-                  // 爆弾タイマーが未起動なら起動（非ホスト側）
-                  setBombInterval(prev => {
-                    if (prev) return prev; // 既に動いていれば再起動しない
-                    const iv = setInterval(() => {
-                      setBombData(prevData => {
-                        const updated = prevData.map(b => b.status === 'active' ? {...b, timeLeft: b.timeLeft - 1} : b);
-                        if (updated.some(b => b.status === 'active' && b.timeLeft <= 0)) {
-                          clearInterval(iv);
-                          return updated.map(b => b.status === 'active' && b.timeLeft <= 0 ? {...b, status: 'exploded' as const} : b);
-                        }
-                        return updated;
-                      });
-                    }, 1000);
-                    return iv;
-                  });
                   setMultiEventPhase(me.phase);
                 } else if (me.phase === 'kanji_quiz' || me.phase === 'math_quiz' || me.phase === 'english_quiz') {
                   // クイズ: 問題・他者回答はKVから受け取るが、タイマーは初回のみ起動
@@ -707,20 +710,22 @@ const App = () => {
                     setQuizLoading(false);
                   }
                   setQuizAnswers(me.quizAnswers ?? {});
-                  setMultiEventPhase(prevPhase => {
-                    if (!prevPhase) {
-                      // 初回: タイマーをセットして起動
-                      setQuizTimeLeft(me.quizTimeLeft ?? 60);
-                      setQuizInterval(prevIv => {
-                        if (prevIv) return prevIv;
-                        const iv = setInterval(() => {
-                          setQuizTimeLeft(t => { if (t <= 1) { clearInterval(iv); return 0; } return t - 1; });
-                        }, 1000);
-                        return iv;
+                  // タイマー初回のみ起動（refで管理して重複起動を確実に防ぐ）
+                  if (!quizTimerStartedRef.current) {
+                    quizTimerStartedRef.current = true;
+                    setQuizTimeLeft(me.quizTimeLeft ?? 60);
+                    if (quizIntervalRef.current) clearInterval(quizIntervalRef.current);
+                    quizIntervalRef.current = setInterval(() => {
+                      setQuizTimeLeft(t => {
+                        if (t <= 1) {
+                          if (quizIntervalRef.current) { clearInterval(quizIntervalRef.current); quizIntervalRef.current = null; }
+                          return 0;
+                        }
+                        return t - 1;
                       });
-                    }
-                    return me.phase;
-                  });
+                    }, 1000);
+                  }
+                  setMultiEventPhase(me.phase);
                 } else {
                   setMultiEventPhase(me.phase);
                 }
@@ -729,6 +734,11 @@ const App = () => {
                 setMultiEventPhase(prev => prev ? null : prev);
               }
             } else if (!me || !me.phase) {
+              // multiEvent が null になったら非ホスト側もタイマーをクリーンアップ
+              if (quizIntervalRef.current) { clearInterval(quizIntervalRef.current); quizIntervalRef.current = null; }
+              if (bombIntervalRef.current) { clearInterval(bombIntervalRef.current); bombIntervalRef.current = null; }
+              quizTimerStartedRef.current = false;
+              bombTimerStartedRef.current = false;
               setMultiEventPhase(null);
             }
           } else {
@@ -740,18 +750,15 @@ const App = () => {
               const allDone = targetPlayerIds.length > 0 && targetPlayerIds.every((pid: string) => answers[pid] !== undefined);
               if (allDone && !quizFinalizingRef.current) {
                 quizFinalizingRef.current = true; // 二重起動防止
-                // 全員提出済み → ホストが正解判定してダメージ適用
+                // 全員提出済み → 正解判定してダメージ適用（stateに頼らずKVの値を直接使う）
                 const questions = me.quizQuestions ?? [];
                 const failedIds = targetPlayerIds.filter((pid: string) => {
                   const ans = answers[pid];
                   if (!ans || ans.length === 0) return true;
+                  // 全問正解チェック: 全5問でans[i] === q.answer が必要
                   return !questions.every((q: {answer:number}, i: number) => ans[i] !== undefined && ans[i] === q.answer);
                 });
-                // setMultiEventXxxを最新値に合わせてからapplyMultiEventDamageを呼ぶ
-                setMultiEventDamage(me.damage);
-                setMultiEventTargets(data.players.filter((p: Player) => targetPlayerIds.includes(p.id)));
-                setMultiEventPhase(me.phase);
-                // 非同期でダメージ適用（nextTickで確実にstateが更新されるように）
+                // KVのデータを直接使ってダメージ適用（stateの非同期遅延を回避）
                 setTimeout(async () => {
                   if (!currentRoomId) { quizFinalizingRef.current = false; return; }
                   const players2 = data.players;
@@ -759,6 +766,9 @@ const App = () => {
                     ? {...p, hp: Math.max(0, p.hp - me.damage)} : p
                   ).map((p: Player) => p.status==='alive' && p.hp<=0 ? {...p, hp:0, status:'dead' as const} : p);
                   const newDead = updated.filter((p: Player) => p.status==='dead' && players2.find((op: Player)=>op.id===p.id)?.status==='alive');
+                  // クイズタイマーをクリーンアップ
+                  if (quizIntervalRef.current) { clearInterval(quizIntervalRef.current); quizIntervalRef.current = null; }
+                  quizTimerStartedRef.current = false;
                   try {
                     await API.patchRoom(currentRoomId, {
                       players: updated,
@@ -1402,18 +1412,19 @@ const App = () => {
       });
       meState = { ...meState, bombData: bombDataInit };
       setBombData(bombDataInit);
-      if (bombInterval) clearInterval(bombInterval);
-      const iv = setInterval(() => {
+      // 既存タイマーをクリアしてから新しいタイマーを起動
+      if (bombIntervalRef.current) clearInterval(bombIntervalRef.current);
+      bombTimerStartedRef.current = true;
+      bombIntervalRef.current = setInterval(() => {
         setBombData(prev => {
           const updated = prev.map(b => b.status === 'active' ? {...b, timeLeft: b.timeLeft - 1} : b);
           if (updated.some(b => b.status === 'active' && b.timeLeft <= 0)) {
-            clearInterval(iv);
+            if (bombIntervalRef.current) { clearInterval(bombIntervalRef.current); bombIntervalRef.current = null; }
             return updated.map(b => b.status === 'active' && b.timeLeft <= 0 ? {...b, status: 'exploded' as const} : b);
           }
           return updated;
         });
       }, 1000);
-      setBombInterval(iv);
     } else if (chosen === 'kanji_quiz' || chosen === 'math_quiz' || chosen === 'english_quiz') {
       setUsedQuizTypes(prev => [...prev, chosen]);
       setQuizLoading(true); setQuizCurrentQ(0);
@@ -1423,11 +1434,18 @@ const App = () => {
       meState = { ...meState, quizQuestions: qs, quizAnswers: {}, quizTimeLeft: 60 };
       setQuizQuestions(qs); setQuizLoading(false);
       setQuizTimeLeft(60);
-      if (quizInterval) clearInterval(quizInterval);
-      const iv = setInterval(() => {
-        setQuizTimeLeft(t => { if (t <= 1) { clearInterval(iv); return 0; } return t - 1; });
+      // 既存タイマーをクリアしてから新しいタイマーを起動
+      if (quizIntervalRef.current) clearInterval(quizIntervalRef.current);
+      quizTimerStartedRef.current = true;
+      quizIntervalRef.current = setInterval(() => {
+        setQuizTimeLeft(t => {
+          if (t <= 1) {
+            if (quizIntervalRef.current) { clearInterval(quizIntervalRef.current); quizIntervalRef.current = null; }
+            return 0;
+          }
+          return t - 1;
+        });
       }, 1000);
-      setQuizInterval(iv);
     }
 
     // KVにマルチイベント状態を保存（全クライアントに同期）
@@ -1477,18 +1495,18 @@ const App = () => {
         };
       });
       setBombData(data);
-      if (bombInterval) clearInterval(bombInterval);
-      const iv = setInterval(() => {
+      if (bombIntervalRef.current) clearInterval(bombIntervalRef.current);
+      bombTimerStartedRef.current = true;
+      bombIntervalRef.current = setInterval(() => {
         setBombData(prev => {
           const updated = prev.map(b => b.status === 'active' ? {...b, timeLeft: b.timeLeft - 1} : b);
           if (updated.some(b => b.status === 'active' && b.timeLeft <= 0)) {
-            clearInterval(iv);
+            if (bombIntervalRef.current) { clearInterval(bombIntervalRef.current); bombIntervalRef.current = null; }
             return updated.map(b => b.status === 'active' && b.timeLeft <= 0 ? {...b, status: 'exploded' as const} : b);
           }
           return updated;
         });
       }, 1000);
-      setBombInterval(iv);
     } else if (chosen === 'kanji_quiz' || chosen === 'math_quiz' || chosen === 'english_quiz') {
       setUsedQuizTypes(prev => [...prev, chosen]);
       setQuizLoading(true); setQuizCurrentQ(0);
@@ -1497,11 +1515,17 @@ const App = () => {
       fetchQuizQuestions(chosen).then(qs => {
         setQuizQuestions(qs); setQuizLoading(false);
         setQuizTimeLeft(60);
-        if (quizInterval) clearInterval(quizInterval);
-        const iv = setInterval(() => {
-          setQuizTimeLeft(t => { if (t <= 1) { clearInterval(iv); return 0; } return t - 1; });
+        if (quizIntervalRef.current) clearInterval(quizIntervalRef.current);
+        quizTimerStartedRef.current = true;
+        quizIntervalRef.current = setInterval(() => {
+          setQuizTimeLeft(t => {
+            if (t <= 1) {
+              if (quizIntervalRef.current) { clearInterval(quizIntervalRef.current); quizIntervalRef.current = null; }
+              return 0;
+            }
+            return t - 1;
+          });
         }, 1000);
-        setQuizInterval(iv);
       });
     }
     setMultiEventPhase(chosen);
@@ -1581,6 +1605,11 @@ const App = () => {
 
   // マルチイベント: ダメージ適用（外部から呼ぶ共通関数）
   const applyMultiEventDamage = async (hitPlayerIds: string[]) => {
+    // タイマーをすべてクリーンアップ
+    if (quizIntervalRef.current) { clearInterval(quizIntervalRef.current); quizIntervalRef.current = null; }
+    if (bombIntervalRef.current) { clearInterval(bombIntervalRef.current); bombIntervalRef.current = null; }
+    quizTimerStartedRef.current = false;
+    bombTimerStartedRef.current = false;
     setMultiEventPhase(null);
     if (!isMultiplayer || !currentRoomId) {
       // シングルプレイ: ローカルで処理
@@ -1614,7 +1643,7 @@ const App = () => {
       if (wireIndex === b.cutWire) {
         return {...b, status: 'cut' as const};
       } else {
-        if (bombInterval) clearInterval(bombInterval);
+        if (bombIntervalRef.current) { clearInterval(bombIntervalRef.current); bombIntervalRef.current = null; }
         return {...b, status: 'wrong' as const};
       }
     });
@@ -1634,14 +1663,16 @@ const App = () => {
     }
     // 全員終了したら自動で結果確定（爆発・切断完了）
     if (newData.every(b => b.status !== 'active')) {
-      setTimeout(() => finalizeBomb(), 1000);
+      setTimeout(() => finalizeBomb(newData), 1000);
     }
   };
 
-  // 爆弾: 結果確定
-  const finalizeBomb = () => {
-    if (bombInterval) { clearInterval(bombInterval); setBombInterval(null); }
-    const failedIds = bombData
+  // 爆弾: 結果確定（引数でデータを受け取ることでstate遅延を回避）
+  const finalizeBomb = (dataSnapshot?: typeof bombData) => {
+    if (bombIntervalRef.current) { clearInterval(bombIntervalRef.current); bombIntervalRef.current = null; }
+    bombTimerStartedRef.current = false;
+    const target = dataSnapshot ?? bombData;
+    const failedIds = target
       .filter(b => b.status === 'exploded' || b.status === 'wrong')
       .map(b => b.playerId);
     applyMultiEventDamage(failedIds);
@@ -1653,6 +1684,15 @@ const App = () => {
     if (qIndex < 4) setQuizCurrentQ(qIndex + 1);
   };
 
+  // 爆弾: 全員終了（exploded/wrong/cut）したら自動確定
+  useEffect(() => {
+    if (multiEventPhase === 'bomb' && bombData.length > 0 && bombData.every(b => b.status !== 'active')) {
+      const timer = setTimeout(() => finalizeBomb(bombData), 1000);
+      return () => clearTimeout(timer);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bombData, multiEventPhase]);
+
   // クイズ: 時間切れ自動提出（quizTimeLeft === 0 かつ クイズモーダル表示中）
   useEffect(() => {
     if (quizTimeLeft === 0 && (multiEventPhase === 'kanji_quiz' || multiEventPhase === 'math_quiz' || multiEventPhase === 'english_quiz')) {
@@ -1663,7 +1703,8 @@ const App = () => {
 
   // クイズ: 提出
   const submitQuiz = async () => {
-    if (quizInterval) { clearInterval(quizInterval); setQuizInterval(null); }
+    if (quizIntervalRef.current) { clearInterval(quizIntervalRef.current); quizIntervalRef.current = null; }
+    quizTimerStartedRef.current = false;
     const myId = players.find(p => p.uid === myUid)?.id || '';
     const myAnswers = myQuizAnswers.map(a => a ?? -1);
     const newAnswers = {...quizAnswers, [myId]: myAnswers};
@@ -1681,26 +1722,24 @@ const App = () => {
           }
         });
       } catch {}
-      // 非ホストはローカルでモーダルを閉じて固まりを防止
-      // （ホストのポーリングが全員分揃ったことを検知してapplyMultiEventDamageを呼ぶ）
+      // 非ホストはローカルでモーダルを即閉じして固まりを防止
+      // （ホストのポーリングが全員分揃ったことを検知してダメージ適用する）
       if (!isHost) {
         setMultiEventPhase(null);
         setQuizCurrentQ(0);
         setMyQuizAnswers([null,null,null,null,null]);
       }
+      return; // マルチプレイの場合はここで終了（ホストのポーリングに委譲）
     }
 
-    // シングルプレイ or ホスト（全員分の回答が揃った場合）
-    const allDone = multiEventTargets.every(p => newAnswers[p.id] !== undefined);
-    if (allDone || !isMultiplayer) {
-      const failedIds = multiEventTargets.filter(p => {
-        const ans = newAnswers[p.id];
-        if (!ans || ans.length === 0) return true; // 未回答はアウト
-        // 全問正解チェック: 全問にans[i] === q.answerが必要
-        return !quizQuestions.every((q, i) => ans[i] !== undefined && ans[i] === q.answer);
-      }).map(p => p.id);
-      applyMultiEventDamage(failedIds);
-    }
+    // シングルプレイ: ローカルで正解判定
+    const failedIds = multiEventTargets.filter(p => {
+      const ans = newAnswers[p.id];
+      if (!ans || ans.length === 0) return true; // 未回答はアウト
+      // 全問正解チェック: 全問でans[i] === q.answer が必要
+      return !quizQuestions.every((q, i) => ans[i] !== undefined && ans[i] === q.answer);
+    }).map(p => p.id);
+    applyMultiEventDamage(failedIds);
   };
 
   const applyManualSelection = () => {
