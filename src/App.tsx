@@ -781,6 +781,13 @@ const App = () => {
                 }, 100);
               }
             }
+            // ===== ホスト側: 爆弾の全員終了検知 =====
+            // 爆弾はホストが対象の場合もあるため、bombDataのuseEffectで処理される
+            // ホストが対象外の場合: KVのbombDataが全員終了していたらホスト側でfinalizeBombを起動
+            const meBomb = data.gameState.multiEvent;
+            if (meBomb && meBomb.phase === 'bomb' && meBomb.bombData && !isHost) {
+              // 非ホストはポーリングで爆弾状態を更新（setBombDataはポーリング側で行わないため何もしない）
+            }
           }
         }
         if (data.status === 'result') {
@@ -1696,7 +1703,52 @@ const App = () => {
   // クイズ: 時間切れ自動提出（quizTimeLeft === 0 かつ クイズモーダル表示中）
   useEffect(() => {
     if (quizTimeLeft === 0 && (multiEventPhase === 'kanji_quiz' || multiEventPhase === 'math_quiz' || multiEventPhase === 'english_quiz')) {
-      submitQuiz();
+      // ホストの場合: 未回答のターゲット全員分を「全部-1（不正解）」でKVに書き込んで強制終了
+      // 非ホスト・シングルプレイの場合: 自分の回答を提出
+      if (isMultiplayer && isHost && currentRoomId) {
+        if (quizFinalizingRef.current) return; // 二重起動防止
+        quizFinalizingRef.current = true;
+        (async () => {
+          try {
+            // 現在のKVを取得して未回答者を特定
+            const roomData = await API.getRoom(currentRoomId);
+            if (!roomData || !roomData.gameState?.multiEvent) { quizFinalizingRef.current = false; return; }
+            const me = roomData.gameState.multiEvent;
+            const existingAnswers: Record<string, number[]> = me.quizAnswers ?? {};
+            const targetPlayerIds: string[] = me.targetIds ?? [];
+            const emptyAnswer = [-1, -1, -1, -1, -1];
+            // 未回答プレイヤーに空の回答（全不正解）を埋める
+            const filledAnswers = { ...existingAnswers };
+            for (const pid of targetPlayerIds) {
+              if (!filledAnswers[pid]) filledAnswers[pid] = emptyAnswer;
+            }
+            // ダメージ判定
+            const questions = me.quizQuestions ?? [];
+            const failedIds = targetPlayerIds.filter((pid: string) => {
+              const ans = filledAnswers[pid];
+              if (!ans || ans.length === 0) return true;
+              return !questions.every((q: {answer:number}, i: number) => ans[i] !== undefined && ans[i] === q.answer);
+            });
+            // KVに反映してイベント終了
+            const players2 = roomData.players;
+            const updated = players2.map((p: Player) => failedIds.includes(p.id)
+              ? {...p, hp: Math.max(0, p.hp - me.damage)} : p
+            ).map((p: Player) => p.status==='alive' && p.hp<=0 ? {...p, hp:0, status:'dead' as const} : p);
+            const newDead = updated.filter((p: Player) => p.status==='dead' && players2.find((op: Player) => op.id === p.id)?.status === 'alive');
+            if (quizIntervalRef.current) { clearInterval(quizIntervalRef.current); quizIntervalRef.current = null; }
+            quizTimerStartedRef.current = false;
+            await API.patchRoom(currentRoomId, {
+              players: updated,
+              'gameState.multiEvent': null,
+              'gameState.logs': [...(newDead.map((d: Player, i: number) => ({id:Date.now()+i, turn:roomData.gameState.turn, type:'death', message:`${d.name}が脱落...`, target:d.name}))), ...(roomData.gameState.logs ?? [])].slice(0, 100)
+            });
+            setMultiEventPhase(null);
+          } catch {}
+          quizFinalizingRef.current = false;
+        })();
+      } else {
+        submitQuiz();
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quizTimeLeft]);
@@ -2818,8 +2870,7 @@ const App = () => {
                     </div>
                   ))}
                 </div>
-                <p className="text-slate-500 text-xs">参加者が操作中です...</p>
-                <button onClick={() => { applyMultiEventDamage([]); }} className="w-full py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 font-black text-sm rounded-xl transition-all">スキップ（強制終了）</button>
+                <p className="text-slate-500 text-xs animate-pulse">参加者が操作中... 自動で結果が反映されます</p>
               </div>
             )}
 
@@ -2862,12 +2913,11 @@ const App = () => {
                     );
                   })}
                 </div>
-                {/* 全員解除完了 or 自分だけ自分の分が終わったら結果確定ボタン */}
-                {(bombData.every(b=>b.status!=='active') || !isMultiplayer) && (
-                  <button onClick={finalizeBomb} className={`w-full py-3 font-black rounded-xl transition-all ${bombData.every(b=>b.status!=='active') ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-slate-800 text-slate-500 border border-slate-700'}`}>
-                    {bombData.every(b=>b.status!=='active') ? '結果確定' : '解除を待機中...'}
-                  </button>
+                {/* 全員終了待ち中の表示（自動確定するのでボタン不要） */}
+                {isMultiplayer && !bombData.every(b=>b.status!=='active') && (
+                  <p className="text-center text-slate-500 text-xs py-2">他のプレイヤーの結果を待機中...</p>
                 )}
+                {/* 全員終了後は自動でfinalizeBomb()が呼ばれる（useEffectで処理） */}
               </div>
             )}
 
