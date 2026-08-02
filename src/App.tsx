@@ -1377,11 +1377,8 @@ const App = () => {
   // ===== マルチイベント: ルーレット結果を元にイベント発動 =====
   const triggerMultiEvent = async (damage: number, targets: Player[]) => {
     if (targets.length === 0) return;
-    // シングルプレイ判定
-    if (!isMultiplayer) {
-      _startMultiEventLocal(damage, targets);
-      return;
-    }
+    // シングルプレイではマルチイベント（爆弾・クイズ）は発動しない（みんなで遊ぶ専用）
+    if (!isMultiplayer) return;
     // マルチプレイ: ホストのみが発動可
     if (!isHost) return;
     const enabled = Object.entries(multiEventEnabled).filter(([,v]) => v).map(([k]) => k);
