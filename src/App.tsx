@@ -94,18 +94,7 @@ interface EliminatedPlayer { name: string; turn: number; }
 interface LogEntry { id: number; turn: number; type: string; message: string; amount?: string | number; target?: string; }
 interface DisplayResult { player: string; amount: string | number; }
 interface LastResult { player: string; targetIds: string[]; amount: string | number; type: string; isReverse?: boolean; isMulti?: boolean; }
-// マルチイベント同期用インターフェース
-interface MultiEventState {
-  phase: 'bomb' | 'kanji_quiz' | 'math_quiz' | 'english_quiz' | null;
-  damage: number;
-  targetIds: string[]; // 対象プレイヤーID一覧
-  // 爆弾
-  bombData?: {playerId:string;wires:number;cutWire:number;timeLeft:number;status:'active'|'cut'|'exploded'|'wrong'}[];
-  // クイズ
-  quizQuestions?: {q:string;choices:string[];answer:number}[];
-  quizAnswers?: Record<string,number[]>;
-  quizTimeLeft?: number;
-}
+// マルチイベント（爆弾・クイズ）は廃止済み
 interface FixedItem { id: number; value: number; prob: number; }
 interface Config { rangeMin: number; rangeMax: number; rangeProb: number; fixedItems: FixedItem[]; }
 interface ReviveEvent { id: number; turn: number; type: 'steal' | 'copy'; }
@@ -442,43 +431,7 @@ const App = () => {
   const [specialMultiProb, setSpecialMultiProb] = useState(30); // 重複発動確率（%）
   const [isSpectatorMode, setIsSpectatorMode] = useState(false); // 観戦モード（ホストのみ）
 
-  // ===== マルチイベント用state =====
-  type MultiEventType = 'bomb' | 'kanji_quiz' | 'math_quiz' | 'english_quiz' | null;
-  const [multiEventPhase, setMultiEventPhase] = useState<MultiEventType>(null);
-  const [multiEventDamage, setMultiEventDamage] = useState(0);
-  const [multiEventTargets, setMultiEventTargets] = useState<Player[]>([]);
-  // 時限爆弾
-  const [bombData, setBombData] = useState<{playerId:string;wires:number;cutWire:number;timeLeft:number;status:'active'|'cut'|'exploded'|'wrong'}[]>([]);
-  const bombIntervalRef = useRef<ReturnType<typeof setInterval>|null>(null); // useRefで管理（stateにするとクロージャ問題）
-  // クイズ
-  const [quizQuestions, setQuizQuestions] = useState<{q:string;choices:string[];answer:number}[]>([]);
-  const [quizAnswers, setQuizAnswers] = useState<Record<string,number[]>>({}); // playerId -> 各問の回答index
-  const [quizTimeLeft, setQuizTimeLeft] = useState(60);
-  const quizIntervalRef = useRef<ReturnType<typeof setInterval>|null>(null); // useRefで管理（stateにするとクロージャ問題）
-  const [quizLoading, setQuizLoading] = useState(false);
-  const [quizCurrentQ, setQuizCurrentQ] = useState(0); // 自分が今見ている問題番号（0-4）
-  const [myQuizAnswers, setMyQuizAnswers] = useState<(number|null)[]>([null,null,null,null,null]);
-  // クイズ重複防止: 同一ゲームセッション内で使用済みクイズ種別を記録
-  const [usedQuizTypes, setUsedQuizTypes] = useState<string[]>([]);
-  // ホスト側クイズ結果処理の二重起動防止フラグ
-  const quizFinalizingRef = useRef(false);
-  // 爆弾タイマー起動済みフラグ（非ホスト側の重複起動防止）
-  const bombTimerStartedRef = useRef(false);
-  // クイズタイマー起動済みフラグ（非ホスト側の重複起動防止）
-  const quizTimerStartedRef = useRef(false);
-  const [multiEventEnabled, setMultiEventEnabled] = useState({
-    bomb: true,
-    kanji_quiz: true,
-    math_quiz: true,
-    english_quiz: true
-  });
-  const [multiEventProb, setMultiEventProb] = useState(20); // マルチイベント発動確率
-  // クイズ難易度設定（各クイズ個別・複数選択可）
-  const [quizDifficultyMap, setQuizDifficultyMap] = useState<Record<string, string[]>>({
-    kanji_quiz:   ['easy', 'medium', 'hard'],
-    math_quiz:    ['easy', 'medium', 'hard'],
-    english_quiz: ['easy', 'medium', 'hard'],
-  });
+  // マルチイベント（爆弾・クイズ）は廃止済み
 
   // numberFormat は spinRoulette 内でローカル変数として使うため
   // state は「表示バッジ用」のみ
@@ -599,6 +552,9 @@ const App = () => {
 
   const [animatingPlayerIds, setAnimatingPlayerIds] = useState<string[]>([]);
   const [animatingType, setAnimatingType] = useState<string | null>(null);
+  // バリアメガ付与演出フェーズ ('fadeout' | 'result' | 'fadein' | null)
+  const [barrierMegaAnimPhase, setBarrierMegaAnimPhase] = useState<'fadeout'|'result'|'fadein'|null>(null);
+  const [barrierMegaTarget, setBarrierMegaTarget] = useState<string>('');
   const [isLogsCopied, setIsLogsCopied] = useState(false);
   const [isRankingCopied, setIsRankingCopied] = useState(false);
   const [isDiscordCopied, setIsDiscordCopied] = useState(false);
@@ -663,132 +619,7 @@ const App = () => {
           setLogs(data.gameState.logs); setEliminated(data.gameState.eliminated);
           setIsSpinning(data.gameState.isSpinning);
           setDisplayResult(data.gameState.displayResult); setLastResult(data.gameState.lastResult);
-          // マルチイベント状態の同期（非ホスト用）
-          if (myUid !== data.hostId) {
-            const me = data.gameState.multiEvent;
-            if (me && me.phase) {
-              const myPlayer = data.players.find((p: Player) => p.uid === myUid);
-              const isTarget = myPlayer && me.targetIds.includes(myPlayer.id);
-              if (isTarget) {
-                setMultiEventDamage(me.damage);
-                setMultiEventTargets(data.players.filter((p: Player) => me.targetIds.includes(p.id)));
-                if (me.phase === 'bomb') {
-                  // 爆弾: statusの変化のみKVから反映。timeLeftはローカルタイマーで管理
-                  setBombData(prev => {
-                    const incoming = me.bombData ?? [];
-                    if (prev.length === 0) {
-                      // 初回セット: KVの値をそのまま使い、タイマーを起動
-                      if (!bombTimerStartedRef.current) {
-                        bombTimerStartedRef.current = true;
-                        if (bombIntervalRef.current) clearInterval(bombIntervalRef.current);
-                        bombIntervalRef.current = setInterval(() => {
-                          setBombData(prevData => {
-                            const upd = prevData.map(b => b.status === 'active' ? {...b, timeLeft: b.timeLeft - 1} : b);
-                            if (upd.some(b => b.status === 'active' && b.timeLeft <= 0)) {
-                              if (bombIntervalRef.current) { clearInterval(bombIntervalRef.current); bombIntervalRef.current = null; }
-                              return upd.map(b => b.status === 'active' && b.timeLeft <= 0 ? {...b, status: 'exploded' as const} : b);
-                            }
-                            return upd;
-                          });
-                        }, 1000);
-                      }
-                      return incoming;
-                    }
-                    // 2回目以降: statusの変化だけKVから反映し、timeLeftはローカルを維持
-                    return prev.map(b => {
-                      const kvB = incoming.find(k => k.playerId === b.playerId);
-                      if (!kvB) return b;
-                      if (b.status === 'active' && kvB.status !== 'active') return {...b, status: kvB.status};
-                      return b;
-                    });
-                  });
-                  setMultiEventPhase(me.phase);
-                } else if (me.phase === 'kanji_quiz' || me.phase === 'math_quiz' || me.phase === 'english_quiz') {
-                  // クイズ: 問題・他者回答はKVから受け取るが、タイマーは初回のみ起動
-                  if (me.quizQuestions && me.quizQuestions.length > 0) {
-                    setQuizQuestions(prev => prev.length > 0 ? prev : me.quizQuestions!);
-                    setQuizLoading(false);
-                  }
-                  setQuizAnswers(me.quizAnswers ?? {});
-                  // タイマー初回のみ起動（refで管理して重複起動を確実に防ぐ）
-                  if (!quizTimerStartedRef.current) {
-                    quizTimerStartedRef.current = true;
-                    setQuizTimeLeft(me.quizTimeLeft ?? 60);
-                    if (quizIntervalRef.current) clearInterval(quizIntervalRef.current);
-                    quizIntervalRef.current = setInterval(() => {
-                      setQuizTimeLeft(t => {
-                        if (t <= 1) {
-                          if (quizIntervalRef.current) { clearInterval(quizIntervalRef.current); quizIntervalRef.current = null; }
-                          return 0;
-                        }
-                        return t - 1;
-                      });
-                    }, 1000);
-                  }
-                  setMultiEventPhase(me.phase);
-                } else {
-                  setMultiEventPhase(me.phase);
-                }
-              } else {
-                // 対象外のプレイヤーはモーダルを閉じる
-                setMultiEventPhase(prev => prev ? null : prev);
-              }
-            } else if (!me || !me.phase) {
-              // multiEvent が null になったら非ホスト側もタイマーをクリーンアップ
-              if (quizIntervalRef.current) { clearInterval(quizIntervalRef.current); quizIntervalRef.current = null; }
-              if (bombIntervalRef.current) { clearInterval(bombIntervalRef.current); bombIntervalRef.current = null; }
-              quizTimerStartedRef.current = false;
-              bombTimerStartedRef.current = false;
-              setMultiEventPhase(null);
-            }
-          } else {
-            // ===== ホスト側: クイズ全員回答済み検知 =====
-            const me = data.gameState.multiEvent;
-            if (me && me.phase && (me.phase === 'kanji_quiz' || me.phase === 'math_quiz' || me.phase === 'english_quiz')) {
-              const answers = me.quizAnswers ?? {};
-              const targetPlayerIds = me.targetIds ?? [];
-              const allDone = targetPlayerIds.length > 0 && targetPlayerIds.every((pid: string) => answers[pid] !== undefined);
-              if (allDone && !quizFinalizingRef.current) {
-                quizFinalizingRef.current = true; // 二重起動防止
-                // 全員提出済み → 正解判定してダメージ適用（stateに頼らずKVの値を直接使う）
-                const questions = me.quizQuestions ?? [];
-                const failedIds = targetPlayerIds.filter((pid: string) => {
-                  const ans = answers[pid];
-                  if (!ans || ans.length === 0) return true;
-                  // 全問正解チェック: 全5問でans[i] === q.answer が必要
-                  return !questions.every((q: {answer:number}, i: number) => ans[i] !== undefined && ans[i] === q.answer);
-                });
-                // KVのデータを直接使ってダメージ適用（stateの非同期遅延を回避）
-                setTimeout(async () => {
-                  if (!currentRoomId) { quizFinalizingRef.current = false; return; }
-                  const players2 = data.players;
-                  const updated = players2.map((p: Player) => failedIds.includes(p.id)
-                    ? {...p, hp: Math.max(0, p.hp - me.damage)} : p
-                  ).map((p: Player) => p.status==='alive' && p.hp<=0 ? {...p, hp:0, status:'dead' as const} : p);
-                  const newDead = updated.filter((p: Player) => p.status==='dead' && players2.find((op: Player)=>op.id===p.id)?.status==='alive');
-                  // クイズタイマーをクリーンアップ
-                  if (quizIntervalRef.current) { clearInterval(quizIntervalRef.current); quizIntervalRef.current = null; }
-                  quizTimerStartedRef.current = false;
-                  try {
-                    await API.patchRoom(currentRoomId, {
-                      players: updated,
-                      'gameState.multiEvent': null,
-                      'gameState.logs': [...(newDead.map((d: Player, i: number) => ({id:Date.now()+i, turn:data.gameState.turn, type:'death', message:`${d.name}が脱落...`, target:d.name}))), ...(data.gameState.logs ?? [])].slice(0,100)
-                    });
-                  } catch {}
-                  setMultiEventPhase(null);
-                  quizFinalizingRef.current = false; // フラグをリセット
-                }, 100);
-              }
-            }
-            // ===== ホスト側: 爆弾の全員終了検知 =====
-            // 爆弾はホストが対象の場合もあるため、bombDataのuseEffectで処理される
-            // ホストが対象外の場合: KVのbombDataが全員終了していたらホスト側でfinalizeBombを起動
-            const meBomb = data.gameState.multiEvent;
-            if (meBomb && meBomb.phase === 'bomb' && meBomb.bombData && !isHost) {
-              // 非ホストはポーリングで爆弾状態を更新（setBombDataはポーリング側で行わないため何もしない）
-            }
-          }
+          // (マルチイベント同期コード廃止済み)
         }
         if (data.status === 'result') {
           setPhase(prev => prev !== 'result' ? 'result' : prev);
@@ -860,13 +691,6 @@ const App = () => {
     if (s.isBarrierEventEnabled !== undefined) setIsBarrierEventEnabled(s.isBarrierEventEnabled);
     if (s.isSpecialMultiEnabled !== undefined) setIsSpecialMultiEnabled(s.isSpecialMultiEnabled);
     if (s.specialMultiProb !== undefined) setSpecialMultiProb(s.specialMultiProb);
-    if (s.multiEventEnabled !== undefined) setMultiEventEnabled(s.multiEventEnabled);
-    if (s.multiEventProb !== undefined) setMultiEventProb(s.multiEventProb);
-    if (s.quizDifficultyMap !== undefined) setQuizDifficultyMap(s.quizDifficultyMap);
-    else if (s.quizDifficulty !== undefined) {
-      // 旧データ互換: 共通difficultyを全クイズに適用
-      setQuizDifficultyMap({ kanji_quiz: s.quizDifficulty, math_quiz: s.quizDifficulty, english_quiz: s.quizDifficulty });
-    }
   };
 
   const toggleSpecialEvent = (type: string) =>
@@ -1011,7 +835,8 @@ const App = () => {
     let isInstantDeath = false, isReverseHealDamage = false, isTrueRandom = false;
     let isDice = false, isNumberFmt = false;
     let localNumberFmt = 'default';
-    let isBarrierGift = false; // 無敵バリアカード付与イベント
+    let isBarrierGift = false; // 無敵バリアカード付与イベント（1枚）
+    let isBarrierMegaGift = false; // 無敵バリアカード10枚付与イベント
 
     const isSpecialActive = isSpecialEventEnabled
       && Math.random() < (specialEventProb / 100)
@@ -1029,6 +854,7 @@ const App = () => {
       if (enabledSpecialEvents.includes('trueRandom'))        logicPool.push('trueRandom');
       if (enabledSpecialEvents.includes('numberFormat') && enabledFormats.length > 0) logicPool.push('numberFormat');
       if (isBarrierEventEnabled)                              logicPool.push('barrierGift');
+      if (isBarrierEventEnabled && Math.random() < 0.10)      logicPool.push('barrierMegaGift');
 
       // 重複発動モード：確率を満たすごとに最大3個まで選択（互いに競合しない組み合わせ）
       const applyEvent = (choice: string) => {
@@ -1044,6 +870,7 @@ const App = () => {
           localNumberFmt = enabledFormats[Math.floor(Math.random() * enabledFormats.length)];
         }
         else if (choice === 'barrierGift') { isBarrierGift = true; }
+        else if (choice === 'barrierMegaGift') { isBarrierMegaGift = true; }
       };
 
       if (logicPool.length > 0) {
@@ -1092,8 +919,9 @@ const App = () => {
         setDisplayResult({ player: `コピー元: ${randomAlive.name}`, amount: 'COPY' });
       } else if (isInstantDeath) {
         setDisplayResult({ player: `【即死】${nameDisp}`, amount: 'DEATH' });
-      } else if (isBarrierGift) {
-        setDisplayResult({ player: `🛡️ ${nameDisp}`, amount: 'BARRIER+1' });
+      } else if (isBarrierGift || isBarrierMegaGift) {
+        const amount = isBarrierMegaGift ? 'BARRIER+10' : 'BARRIER+1';
+        setDisplayResult({ player: `🛡️ ${nameDisp}`, amount });
       } else if (isDice && diceResult) {
         const prefix = isReverse ? '【以外】' : (isMulti ? '【複数】' : '');
         // スピン中はランダムなダイス値をアニメーション表示
@@ -1117,7 +945,7 @@ const App = () => {
             isReverse, isMulti, weightedPlayers,
             isFeint, isInstantDeath, isReverseHealDamage,
             isDice, diceResult,
-            localNumberFmt, isBarrierGift
+            localNumberFmt, isBarrierGift, isBarrierMegaGift
           );
         }
       }
@@ -1144,7 +972,8 @@ const App = () => {
     isDice: boolean,
     diceResult: { rolls: number[]; total: number; faceMax: number } | null,
     fmt: string,
-    isBarrierGift: boolean = false
+    isBarrierGift: boolean = false,
+    isBarrierMegaGift: boolean = false
   ) => {
     let chosenPlayer = selectWeightedPlayer(weightedPlayers);
     let reviveTarget: Player | undefined;
@@ -1179,6 +1008,48 @@ const App = () => {
         setPlayers(updatedPlayers);
         setLastResult({ player: chosenPlayer.name, targetIds, amount: 'BARRIER+1', type: 'barrier', isReverse: false, isMulti: false });
         setLogs(prev => [{ id: Date.now(), turn, type: 'system', message: customLogData!.message||'', target: chosenPlayer.name, amount: 'BARRIER+1' }, ...prev]);
+        setTimeout(() => { setIsSpinning(false); setTurn(t => t + 1); }, 1500);
+      }
+      return;
+    }
+
+    // ===== 無敵バリアカード10枚付与イベント（フェードアウト→演出→フェードイン） =====
+    if (isBarrierMegaGift) {
+      updatedPlayers = updatedPlayers.map(p =>
+        p.id === chosenPlayer.id ? { ...p, barriers: (p.barriers || 0) + 10 } : p
+      );
+      customLogData = { type: 'system', message: `✨ ${chosenPlayer.name}が無敵バリアカードを10枚入手！(${(chosenPlayer.barriers||0)+10}枚)`, target: chosenPlayer.name, amount: 'BARRIER+10' };
+      targetIds = [chosenPlayer.id];
+      // フェードアウト演出開始
+      setBarrierMegaTarget(chosenPlayer.name);
+      setBarrierMegaAnimPhase('fadeout');
+      await new Promise(r => setTimeout(r, 600));
+      // 結果表示
+      setBarrierMegaAnimPhase('result');
+      await updateDisplayResultMulti({ player: `✨🛡️ ${chosenPlayer.name}`, amount: 'BARRIER+10' });
+      await new Promise(r => setTimeout(r, 2000));
+      // フェードイン
+      setBarrierMegaAnimPhase('fadein');
+      await new Promise(r => setTimeout(r, 600));
+      setBarrierMegaAnimPhase(null);
+
+      if (isMultiplayer && currentRoomId) {
+        try {
+          await API.patchRoom(currentRoomId, {
+            players: updatedPlayers,
+            'gameState.turn': turn + 1,
+            'gameState.logs': [{ id: Date.now(), turn, type: 'system', message: customLogData.message, target: chosenPlayer.name, amount: 'BARRIER+10' }, ...logs].slice(0, 100),
+            'gameState.eliminated': eliminated,
+            'gameState.isSpinning': false,
+            'gameState.displayResult': { player: `✨🛡️ ${chosenPlayer.name}`, amount: 'BARRIER+10' },
+            'gameState.lastResult': { player: chosenPlayer.name, targetIds, amount: 'BARRIER+10', type: 'barrier', isReverse: false, isMulti: false },
+          });
+          setIsSpinning(false);
+        } catch { setIsSpinning(false); }
+      } else {
+        setPlayers(updatedPlayers);
+        setLastResult({ player: chosenPlayer.name, targetIds, amount: 'BARRIER+10', type: 'barrier', isReverse: false, isMulti: false });
+        setLogs(prev => [{ id: Date.now(), turn, type: 'system', message: customLogData!.message||'', target: chosenPlayer.name, amount: 'BARRIER+10' }, ...prev]);
         setTimeout(() => { setIsSpinning(false); setTurn(t => t + 1); }, 1500);
       }
       return;
@@ -1344,11 +1215,6 @@ const App = () => {
         // シングルと同じ1500ms後に後処理
         setTimeout(() => {
           setIsSpinning(false);
-          // マルチイベント発動判定（ダメージターンのみ、ゲーム終了でない場合）
-          if (!isFinished && effectType === 'damage') {
-            const targets = updatedPlayers.filter(p => targetIds.includes(p.id) && p.status === 'alive');
-            triggerMultiEvent(finalAmount as number, targets);
-          }
         }, 1500);
       } catch { setIsSpinning(false); }
     } else {
@@ -1356,439 +1222,17 @@ const App = () => {
       if (newlyDead.length > 0) setEliminated(prev => [...prev, ...newlyDead]);
       setLastResult({ player: chosenPlayer.name, targetIds, amount: finalAmount, type: effectType, isReverse, isMulti });
       setLogs(prev => [...turnLogs, ...prev]);
-      setTimeout(() => {
-        setIsSpinning(false);
-        const afterAlive = updatedPlayers.filter(p => p.status === 'alive');
-        const isFinished = mode === 'team' ? new Set(afterAlive.map(p => p.team)).size <= 1 : afterAlive.length <= 1;
-        if (isFinished) {
-          setPhase('result');
-        } else {
-          setTurn(t => t + 1);
-          // シングルプレイのマルチイベント発動
-          if (effectType === 'damage' && isSpecialEventEnabled) {
-            const targets = updatedPlayers.filter(p => targetIds.includes(p.id) && p.status === 'alive');
-            if (targets.length > 0) triggerMultiEvent(finalAmount as number, targets);
+        setTimeout(() => {
+          setIsSpinning(false);
+          const afterAlive = updatedPlayers.filter(p => p.status === 'alive');
+          const isFinished = mode === 'team' ? new Set(afterAlive.map(p => p.team)).size <= 1 : afterAlive.length <= 1;
+          if (isFinished) {
+            setPhase('result');
+          } else {
+            setTurn(t => t + 1);
           }
-        }
-      }, 1500);
+        }, 1500);
     }
-  };
-
-  // ===== マルチイベント: ルーレット結果を元にイベント発動 =====
-  const triggerMultiEvent = async (damage: number, targets: Player[]) => {
-    if (targets.length === 0) return;
-    // シングルプレイではマルチイベント（爆弾・クイズ）は発動しない（みんなで遊ぶ専用）
-    if (!isMultiplayer) return;
-    // マルチプレイ: ホストのみが発動可
-    if (!isHost) return;
-    const enabled = Object.entries(multiEventEnabled).filter(([,v]) => v).map(([k]) => k);
-    if (enabled.length === 0) return;
-    if (Math.random() * 100 > multiEventProb) return;
-
-    // クイズ同士の重複防止: 既に使用済みのクイズ種別を候補から除外
-    const quizTypes = ['kanji_quiz', 'math_quiz', 'english_quiz'];
-    const available = enabled.filter(k => {
-      if (quizTypes.includes(k)) return !usedQuizTypes.includes(k);
-      return true;
-    });
-    const pool = available.length > 0 ? available : enabled.filter(k => !quizTypes.includes(k));
-    if (pool.length === 0) return;
-
-    const chosen = pool[Math.floor(Math.random() * pool.length)] as MultiEventType;
-    const targetIds = targets.map(p => p.id);
-
-    // ホスト自身が対象かどうかチェック
-    const myPlayer = players.find(p => p.uid === myUid);
-    const hostIsTarget = myPlayer ? targetIds.includes(myPlayer.id) : false;
-
-    let meState: MultiEventState = { phase: chosen, damage, targetIds };
-
-    if (chosen === 'bomb') {
-      const bombDataInit = targets.map(p => {
-        const wires = Math.floor(Math.random() * 10) + 1; // 1-10本
-        return {
-          playerId: p.id,
-          wires,
-          cutWire: Math.floor(Math.random() * wires), // 0-(wires-1): 必ずwires範囲内
-          timeLeft: 60,
-          status: 'active' as const
-        };
-      });
-      meState = { ...meState, bombData: bombDataInit };
-      setBombData(bombDataInit);
-      // 既存タイマーをクリアしてから新しいタイマーを起動
-      if (bombIntervalRef.current) clearInterval(bombIntervalRef.current);
-      bombTimerStartedRef.current = true;
-      bombIntervalRef.current = setInterval(() => {
-        setBombData(prev => {
-          const updated = prev.map(b => b.status === 'active' ? {...b, timeLeft: b.timeLeft - 1} : b);
-          if (updated.some(b => b.status === 'active' && b.timeLeft <= 0)) {
-            if (bombIntervalRef.current) { clearInterval(bombIntervalRef.current); bombIntervalRef.current = null; }
-            return updated.map(b => b.status === 'active' && b.timeLeft <= 0 ? {...b, status: 'exploded' as const} : b);
-          }
-          return updated;
-        });
-      }, 1000);
-    } else if (chosen === 'kanji_quiz' || chosen === 'math_quiz' || chosen === 'english_quiz') {
-      setUsedQuizTypes(prev => [...prev, chosen]);
-      setQuizLoading(true); setQuizCurrentQ(0);
-      setMyQuizAnswers([null,null,null,null,null]);
-      setQuizAnswers({});
-      const qs = await fetchQuizQuestions(chosen);
-      meState = { ...meState, quizQuestions: qs, quizAnswers: {}, quizTimeLeft: 60 };
-      setQuizQuestions(qs); setQuizLoading(false);
-      setQuizTimeLeft(60);
-      // 既存タイマーをクリアしてから新しいタイマーを起動
-      if (quizIntervalRef.current) clearInterval(quizIntervalRef.current);
-      quizTimerStartedRef.current = true;
-      quizIntervalRef.current = setInterval(() => {
-        setQuizTimeLeft(t => {
-          if (t <= 1) {
-            if (quizIntervalRef.current) { clearInterval(quizIntervalRef.current); quizIntervalRef.current = null; }
-            return 0;
-          }
-          return t - 1;
-        });
-      }, 1000);
-    }
-
-    // KVにマルチイベント状態を保存（全クライアントに同期）
-    if (currentRoomId) {
-      try {
-        await API.patchRoom(currentRoomId, { 'gameState.multiEvent': meState });
-      } catch {}
-    }
-
-    // ホストが対象の場合だけホスト自身にもモーダルを表示
-    setMultiEventDamage(damage);
-    setMultiEventTargets(targets);
-    if (hostIsTarget) {
-      setMultiEventPhase(chosen);
-    } else {
-      // ホストが対象外の場合はホスト管理モーダル（全員の状況を見れる観戦UI）を表示
-      setMultiEventPhase(chosen);
-    }
-  };
-
-  // ===== シングルプレイ用マルチイベント発動（ローカル処理） =====
-  const _startMultiEventLocal = (damage: number, targets: Player[]) => {
-    const enabled = Object.entries(multiEventEnabled).filter(([,v]) => v).map(([k]) => k);
-    if (enabled.length === 0) return;
-    if (Math.random() * 100 > multiEventProb) return;
-
-    const quizTypes = ['kanji_quiz', 'math_quiz', 'english_quiz'];
-    const available = enabled.filter(k => {
-      if (quizTypes.includes(k)) return !usedQuizTypes.includes(k);
-      return true;
-    });
-    const pool = available.length > 0 ? available : enabled.filter(k => !quizTypes.includes(k));
-    if (pool.length === 0) return;
-
-    const chosen = pool[Math.floor(Math.random() * pool.length)] as MultiEventType;
-    setMultiEventDamage(damage);
-    setMultiEventTargets(targets);
-    if (chosen === 'bomb') {
-      const data = targets.map(p => {
-        const wires = Math.floor(Math.random() * 10) + 1; // 1-10本
-        return {
-          playerId: p.id,
-          wires,
-          cutWire: Math.floor(Math.random() * wires), // 0-(wires-1): 必ずwires範囲内
-          timeLeft: 60,
-          status: 'active' as const
-        };
-      });
-      setBombData(data);
-      if (bombIntervalRef.current) clearInterval(bombIntervalRef.current);
-      bombTimerStartedRef.current = true;
-      bombIntervalRef.current = setInterval(() => {
-        setBombData(prev => {
-          const updated = prev.map(b => b.status === 'active' ? {...b, timeLeft: b.timeLeft - 1} : b);
-          if (updated.some(b => b.status === 'active' && b.timeLeft <= 0)) {
-            if (bombIntervalRef.current) { clearInterval(bombIntervalRef.current); bombIntervalRef.current = null; }
-            return updated.map(b => b.status === 'active' && b.timeLeft <= 0 ? {...b, status: 'exploded' as const} : b);
-          }
-          return updated;
-        });
-      }, 1000);
-    } else if (chosen === 'kanji_quiz' || chosen === 'math_quiz' || chosen === 'english_quiz') {
-      setUsedQuizTypes(prev => [...prev, chosen]);
-      setQuizLoading(true); setQuizCurrentQ(0);
-      setMyQuizAnswers([null,null,null,null,null]);
-      setQuizAnswers({});
-      fetchQuizQuestions(chosen).then(qs => {
-        setQuizQuestions(qs); setQuizLoading(false);
-        setQuizTimeLeft(60);
-        if (quizIntervalRef.current) clearInterval(quizIntervalRef.current);
-        quizTimerStartedRef.current = true;
-        quizIntervalRef.current = setInterval(() => {
-          setQuizTimeLeft(t => {
-            if (t <= 1) {
-              if (quizIntervalRef.current) { clearInterval(quizIntervalRef.current); quizIntervalRef.current = null; }
-              return 0;
-            }
-            return t - 1;
-          });
-        }, 1000);
-      });
-    }
-    setMultiEventPhase(chosen);
-  };
-
-  // クイズ問題生成（AI API → フォールバック: ビルトイン問題バンク）
-  const fetchQuizQuestions = async (type: string): Promise<{q:string;choices:string[];answer:number}[]> => {
-    // AI APIを試みる
-    try {
-      const res = await fetch(`${getApiBase()}/api/quiz/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type, difficulty: quizDifficultyMap[type] ?? ['easy', 'medium', 'hard'] })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.questions && Array.isArray(data.questions) && data.questions.length >= 5) {
-          return data.questions.slice(0, 5);
-        }
-      }
-    } catch { /* AI失敗時はフォールバックへ */ }
-
-    // フォールバック: ビルトイン問題バンク
-    if (type === 'kanji_quiz') {
-      const bank = [
-        {q:'「薔薇」の読み方は？', choices:['ばら','はな','くさ','うめ'], answer:0},
-        {q:'「鬱」の読み方は？', choices:['うつ','かつ','まつ','ほつ'], answer:0},
-        {q:'「蒲公英」は何の花？', choices:['タンポポ','ひまわり','あさがお','さくら'], answer:0},
-        {q:'「海豚」の読み方は？', choices:['いるか','くじら','さめ','たこ'], answer:0},
-        {q:'「向日葵」の読み方は？', choices:['ひまわり','あさがお','すみれ','もみじ'], answer:0},
-        {q:'「蜻蛉」の読み方は？', choices:['とんぼ','むし','はち','かぶと'], answer:0},
-        {q:'「撫子」の読み方は？', choices:['なでしこ','きく','はす','ふじ'], answer:0},
-        {q:'「鰐」の読み方は？', choices:['わに','へび','かめ','とかげ'], answer:0},
-        {q:'「狸」の読み方は？', choices:['たぬき','きつね','うさぎ','くま'], answer:0},
-        {q:'「蛍」の読み方は？', choices:['ほたる','あり','かに','せみ'], answer:0},
-        {q:'「麒麟」の読み方は？', choices:['きりん','うま','ぞう','らくだ'], answer:0},
-        {q:'「鳳凰」の読み方は？', choices:['ほうおう','えんま','りゅう','とら'], answer:0},
-        {q:'「珊瑚」の読み方は？', choices:['さんご','しんじゅ','たい','かい'], answer:0},
-        {q:'「鷹」の読み方は？', choices:['たか','つる','わし','かも'], answer:0},
-        {q:'「葡萄」の読み方は？', choices:['ぶどう','もも','なし','かき'], answer:0},
-      ];
-      return shuffle(bank).slice(0,5);
-    } else if (type === 'math_quiz') {
-      const qs: {q:string;choices:string[];answer:number}[] = [];
-      for (let i = 0; i < 5; i++) {
-        const a = Math.floor(Math.random()*50)+1;
-        const b = Math.floor(Math.random()*50)+1;
-        const op = ['+','-','×'][Math.floor(Math.random()*3)];
-        const correct = op==='+' ? a+b : op==='-' ? a-b : a*b;
-        const choices = shuffle([correct, correct+(Math.floor(Math.random()*10)+1), correct-(Math.floor(Math.random()*10)+1), correct*2]).slice(0,4).map(String);
-        const answer = choices.indexOf(String(correct));
-        qs.push({q:`${a} ${op} ${b} = ?`, choices, answer});
-      }
-      return qs;
-    } else {
-      const bank = [
-        {q:'「apple」の意味は？', choices:['りんご','みかん','ぶどう','いちご'], answer:0},
-        {q:'「ocean」の意味は？', choices:['海','山','川','湖'], answer:0},
-        {q:'「friend」の意味は？', choices:['友達','敵','先生','親'], answer:0},
-        {q:'「beautiful」の意味は？', choices:['美しい','怖い','悲しい','嬉しい'], answer:0},
-        {q:'「library」の意味は？', choices:['図書館','病院','学校','市場'], answer:0},
-        {q:'「butterfly」の意味は？', choices:['蝶','蜂','蚊','蟻'], answer:0},
-        {q:'「thunder」の意味は？', choices:['雷','風','雨','雪'], answer:0},
-        {q:'「ancient」の意味は？', choices:['古代の','新しい','速い','重い'], answer:0},
-        {q:'「whisper」の意味は？', choices:['囁く','叫ぶ','笑う','泣く'], answer:0},
-        {q:'「journey」の意味は？', choices:['旅','家','夢','歌'], answer:0},
-        {q:'「brave」の意味は？', choices:['勇敢な','臆病な','賢い','強い'], answer:0},
-        {q:'「shadow」の意味は？', choices:['影','光','風','霧'], answer:0},
-        {q:'「treasure」の意味は？', choices:['宝','石','土','草'], answer:0},
-        {q:'「midnight」の意味は？', choices:['真夜中','昼間','夕方','朝'], answer:0},
-        {q:'「rainbow」の意味は？', choices:['虹','星','月','太陽'], answer:0},
-      ];
-      return shuffle(bank).slice(0,5);
-    }
-  };
-  const shuffle = <T,>(arr: T[]): T[] => [...arr].sort(() => Math.random()-0.5);
-
-  // マルチイベント: ダメージ適用（外部から呼ぶ共通関数）
-  const applyMultiEventDamage = async (hitPlayerIds: string[]) => {
-    // タイマーをすべてクリーンアップ
-    if (quizIntervalRef.current) { clearInterval(quizIntervalRef.current); quizIntervalRef.current = null; }
-    if (bombIntervalRef.current) { clearInterval(bombIntervalRef.current); bombIntervalRef.current = null; }
-    quizTimerStartedRef.current = false;
-    bombTimerStartedRef.current = false;
-    setMultiEventPhase(null);
-    if (!isMultiplayer || !currentRoomId) {
-      // シングルプレイ: ローカルで処理
-      if (hitPlayerIds.length > 0) {
-        setPlayers(prev => prev.map(p => hitPlayerIds.includes(p.id)
-          ? {...p, hp: Math.max(0, p.hp - multiEventDamage)}
-          : p
-        ).map(p => p.status==='alive' && p.hp<=0 ? {...p, hp:0, status:'dead' as const} : p));
-      }
-      return;
-    }
-    // マルチプレイ: KVに反映してmultiEventをクリア
-    const updated = players.map(p => hitPlayerIds.includes(p.id)
-      ? {...p, hp: Math.max(0, p.hp - multiEventDamage)}
-      : p
-    ).map(p => p.status==='alive' && p.hp<=0 ? {...p, hp:0, status:'dead' as const} : p);
-    const newDead = updated.filter(p => p.status==='dead' && players.find(op=>op.id===p.id)?.status==='alive');
-    try {
-      await API.patchRoom(currentRoomId, {
-        players: updated,
-        'gameState.multiEvent': null,
-        'gameState.logs': [...(newDead.map((d,i) => ({id:Date.now()+i, turn, type:'death', message:`${d.name}が脱落...`, target:d.name}))), ...logs].slice(0,100)
-      });
-    } catch {}
-  };
-
-  // 爆弾: ワイヤーを切る
-  const cutWire = async (playerId: string, wireIndex: number) => {
-    const newData = bombData.map(b => {
-      if (b.playerId !== playerId || b.status !== 'active') return b;
-      if (wireIndex === b.cutWire) {
-        return {...b, status: 'cut' as const};
-      } else {
-        if (bombIntervalRef.current) { clearInterval(bombIntervalRef.current); bombIntervalRef.current = null; }
-        return {...b, status: 'wrong' as const};
-      }
-    });
-    setBombData(newData);
-    // マルチプレイ: KVにbombData状態を同期
-    if (isMultiplayer && currentRoomId) {
-      try {
-        await API.patchRoom(currentRoomId, {
-          'gameState.multiEvent': {
-            phase: 'bomb',
-            damage: multiEventDamage,
-            targetIds: multiEventTargets.map(p => p.id),
-            bombData: newData
-          }
-        });
-      } catch {}
-    }
-    // 全員終了したら自動で結果確定（爆発・切断完了）
-    if (newData.every(b => b.status !== 'active')) {
-      setTimeout(() => finalizeBomb(newData), 1000);
-    }
-  };
-
-  // 爆弾: 結果確定（引数でデータを受け取ることでstate遅延を回避）
-  const finalizeBomb = (dataSnapshot?: typeof bombData) => {
-    if (bombIntervalRef.current) { clearInterval(bombIntervalRef.current); bombIntervalRef.current = null; }
-    bombTimerStartedRef.current = false;
-    const target = dataSnapshot ?? bombData;
-    const failedIds = target
-      .filter(b => b.status === 'exploded' || b.status === 'wrong')
-      .map(b => b.playerId);
-    applyMultiEventDamage(failedIds);
-  };
-
-  // クイズ: 回答を記録
-  const answerQuiz = (qIndex: number, choiceIndex: number) => {
-    setMyQuizAnswers(prev => { const n = [...prev]; n[qIndex] = choiceIndex; return n; });
-    if (qIndex < 4) setQuizCurrentQ(qIndex + 1);
-  };
-
-  // 爆弾: 全員終了（exploded/wrong/cut）したら自動確定
-  useEffect(() => {
-    if (multiEventPhase === 'bomb' && bombData.length > 0 && bombData.every(b => b.status !== 'active')) {
-      const timer = setTimeout(() => finalizeBomb(bombData), 1000);
-      return () => clearTimeout(timer);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bombData, multiEventPhase]);
-
-  // クイズ: 時間切れ自動提出（quizTimeLeft === 0 かつ クイズモーダル表示中）
-  useEffect(() => {
-    if (quizTimeLeft === 0 && (multiEventPhase === 'kanji_quiz' || multiEventPhase === 'math_quiz' || multiEventPhase === 'english_quiz')) {
-      // ホストの場合: 未回答のターゲット全員分を「全部-1（不正解）」でKVに書き込んで強制終了
-      // 非ホスト・シングルプレイの場合: 自分の回答を提出
-      if (isMultiplayer && isHost && currentRoomId) {
-        if (quizFinalizingRef.current) return; // 二重起動防止
-        quizFinalizingRef.current = true;
-        (async () => {
-          try {
-            // 現在のKVを取得して未回答者を特定
-            const roomData = await API.getRoom(currentRoomId);
-            if (!roomData || !roomData.gameState?.multiEvent) { quizFinalizingRef.current = false; return; }
-            const me = roomData.gameState.multiEvent;
-            const existingAnswers: Record<string, number[]> = me.quizAnswers ?? {};
-            const targetPlayerIds: string[] = me.targetIds ?? [];
-            const emptyAnswer = [-1, -1, -1, -1, -1];
-            // 未回答プレイヤーに空の回答（全不正解）を埋める
-            const filledAnswers = { ...existingAnswers };
-            for (const pid of targetPlayerIds) {
-              if (!filledAnswers[pid]) filledAnswers[pid] = emptyAnswer;
-            }
-            // ダメージ判定
-            const questions = me.quizQuestions ?? [];
-            const failedIds = targetPlayerIds.filter((pid: string) => {
-              const ans = filledAnswers[pid];
-              if (!ans || ans.length === 0) return true;
-              return !questions.every((q: {answer:number}, i: number) => ans[i] !== undefined && ans[i] === q.answer);
-            });
-            // KVに反映してイベント終了
-            const players2 = roomData.players;
-            const updated = players2.map((p: Player) => failedIds.includes(p.id)
-              ? {...p, hp: Math.max(0, p.hp - me.damage)} : p
-            ).map((p: Player) => p.status==='alive' && p.hp<=0 ? {...p, hp:0, status:'dead' as const} : p);
-            const newDead = updated.filter((p: Player) => p.status==='dead' && players2.find((op: Player) => op.id === p.id)?.status === 'alive');
-            if (quizIntervalRef.current) { clearInterval(quizIntervalRef.current); quizIntervalRef.current = null; }
-            quizTimerStartedRef.current = false;
-            await API.patchRoom(currentRoomId, {
-              players: updated,
-              'gameState.multiEvent': null,
-              'gameState.logs': [...(newDead.map((d: Player, i: number) => ({id:Date.now()+i, turn:roomData.gameState.turn, type:'death', message:`${d.name}が脱落...`, target:d.name}))), ...(roomData.gameState.logs ?? [])].slice(0, 100)
-            });
-            setMultiEventPhase(null);
-          } catch {}
-          quizFinalizingRef.current = false;
-        })();
-      } else {
-        submitQuiz();
-      }
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [quizTimeLeft]);
-
-  // クイズ: 提出
-  const submitQuiz = async () => {
-    if (quizIntervalRef.current) { clearInterval(quizIntervalRef.current); quizIntervalRef.current = null; }
-    quizTimerStartedRef.current = false;
-    const myId = players.find(p => p.uid === myUid)?.id || '';
-    const myAnswers = myQuizAnswers.map(a => a ?? -1);
-    const newAnswers = {...quizAnswers, [myId]: myAnswers};
-    setQuizAnswers(newAnswers);
-
-    // マルチプレイ: 自分の回答をKVに同期
-    if (isMultiplayer && currentRoomId) {
-      try {
-        await API.patchRoom(currentRoomId, {
-          'gameState.multiEvent': {
-            phase: multiEventPhase,
-            damage: multiEventDamage,
-            targetIds: multiEventTargets.map(p => p.id),
-            quizQuestions, quizAnswers: newAnswers, quizTimeLeft
-          }
-        });
-      } catch {}
-      // 非ホストはローカルでモーダルを即閉じして固まりを防止
-      // （ホストのポーリングが全員分揃ったことを検知してダメージ適用する）
-      if (!isHost) {
-        setMultiEventPhase(null);
-        setQuizCurrentQ(0);
-        setMyQuizAnswers([null,null,null,null,null]);
-      }
-      return; // マルチプレイの場合はここで終了（ホストのポーリングに委譲）
-    }
-
-    // シングルプレイ: ローカルで正解判定
-    const failedIds = multiEventTargets.filter(p => {
-      const ans = newAnswers[p.id];
-      if (!ans || ans.length === 0) return true; // 未回答はアウト
-      // 全問正解チェック: 全問でans[i] === q.answer が必要
-      return !quizQuestions.every((q, i) => ans[i] !== undefined && ans[i] === q.answer);
-    }).map(p => p.id);
-    applyMultiEventDamage(failedIds);
   };
 
   const applyManualSelection = () => {
@@ -1939,8 +1383,7 @@ const App = () => {
         settings: { title, mode, teamCount, teamNames, initialHP, spinDuration, healInterval,
           isHpBalanceEnabled, isSpecialEventEnabled, specialEventProb, enabledSpecialEvents,
           diceConfig, enabledFormats, config, reviveEvents,
-          isBarrierEventEnabled, isSpecialMultiEnabled, specialMultiProb,
-          multiEventEnabled, multiEventProb, quizDifficultyMap },
+          isBarrierEventEnabled, isSpecialMultiEnabled, specialMultiProb },
         players: [],
         gameState: { turn: 1, logs: [], eliminated: [], isSpinning: false,
           displayResult: { player: '\uff1f\uff1f\uff1f', amount: '\uff1f' }, lastResult: null }
@@ -1988,7 +1431,6 @@ const App = () => {
     })));
     setPhase('playing'); setTurn(1); setEliminated([]); setLogs([]); setLastResult(null);
     setActiveNumberFormat('default');
-    setUsedQuizTypes([]); // クイズ重複防止リセット
     setIsManualSelectionPhase(false); setSelectedPlayerIds([]);
   };
 
@@ -1996,7 +1438,6 @@ const App = () => {
     if (!currentRoomId) return;
     const colors = ['text-red-400','text-blue-400','text-emerald-400','text-amber-400','text-purple-400','text-cyan-400'];
     try {
-      setUsedQuizTypes([]); // クイズ重複防止リセット
       await API.patchRoom(currentRoomId, {
         status: 'playing',
         players: players.map(p => ({ ...p, teamColor: mode === 'team' ? colors[(p.teamIndex||0) % colors.length] : null })),
@@ -2433,58 +1874,6 @@ const App = () => {
                       <div className={`px-2 py-0.5 rounded text-[8px] font-black ${isManualModeEnabled ? 'bg-amber-600' : 'bg-slate-800'}`}>{isManualModeEnabled ? 'ON' : 'OFF'}</div>
                     </button>
                   )}
-                  {/* マルチプレイ専用イベント設定 */}
-                  {isMultiplayer && isHost && (
-                    <div className="mt-2 p-3 bg-slate-950 rounded-2xl border border-rose-500/30 space-y-2">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-[9px] font-black text-rose-400 uppercase tracking-widest">🎲 マルチイベント</span>
-                        <div className="flex items-center gap-1">
-                          <span className="text-[8px] text-slate-500">発動率</span>
-                          <input type="number" min={1} max={100} value={multiEventProb} onChange={e => setMultiEventProb(Math.max(1,Math.min(100,parseInt(e.target.value)||1)))} className="w-10 bg-slate-900 border border-rose-500/30 rounded-lg text-center text-[10px] font-black text-rose-300 outline-none px-1 py-0.5"/>
-                          <span className="text-[8px] text-slate-500">%</span>
-                        </div>
-                      </div>
-                      {([
-                        {key:'bomb',             icon:'💣', label:'時限爆弾解除'},
-                        {key:'kanji_quiz',       icon:'漢', label:'漢字クイズ'},
-                        {key:'math_quiz',        icon:'➕', label:'計算クイズ'},
-                        {key:'english_quiz',     icon:'🔤', label:'英単語クイズ'},
-                      ] as const).map(ev => (
-                        <div key={ev.key}>
-                          <button onClick={() => setMultiEventEnabled(prev => ({...prev, [ev.key]: !prev[ev.key]}))}
-                            className={`w-full px-3 py-2 rounded-xl border flex items-center justify-between transition-all text-[9px] font-bold ${multiEventEnabled[ev.key] ? 'bg-rose-900/20 border-rose-500/40 text-rose-200' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>
-                            <span className="flex items-center gap-2">{ev.icon} {ev.label}</span>
-                            <div className={`w-2 h-2 rounded-full ${multiEventEnabled[ev.key] ? 'bg-rose-400 shadow-[0_0_6px_rgba(251,113,133,0.6)]' : 'bg-slate-700'}`}/>
-                          </button>
-                          {multiEventEnabled[ev.key] && (ev.key === 'kanji_quiz' || ev.key === 'math_quiz' || ev.key === 'english_quiz') && (
-                            <div className="mt-1 ml-2 flex items-center gap-1 flex-wrap">
-                              <span className="text-[8px] text-slate-500 mr-0.5">難易度:</span>
-                              {([
-                                {id:'easy',   label:'やさしい', on:'text-emerald-300 border-emerald-600 bg-emerald-900/30', off:'text-slate-600 border-slate-800 bg-slate-900'},
-                                {id:'medium', label:'ふつう',     on:'text-amber-300   border-amber-600   bg-amber-900/30',   off:'text-slate-600 border-slate-800 bg-slate-900'},
-                                {id:'hard',   label:'むずかしい', on:'text-orange-300  border-orange-600  bg-orange-900/30',  off:'text-slate-600 border-slate-800 bg-slate-900'},
-                                {id:'expert', label:'激ムズ',     on:'text-red-300     border-red-600     bg-red-900/30',     off:'text-slate-600 border-slate-800 bg-slate-900'},
-                              ] as const).map(d => (
-                                <button key={d.id}
-                                  onClick={() => setQuizDifficultyMap(prev => {
-                                    const cur = prev[ev.key] ?? ['easy', 'medium', 'hard'];
-                                    const next = cur.includes(d.id)
-                                      ? (cur.length > 1 ? cur.filter(x => x !== d.id) : cur)
-                                      : [...cur, d.id];
-                                    return { ...prev, [ev.key]: next };
-                                  })}
-                                  className={`px-2 py-0.5 rounded-lg border text-[8px] font-black transition-all ${
-                                    (quizDifficultyMap[ev.key] ?? ['easy','medium','hard']).includes(d.id) ? d.on : d.off
-                                  }`}>
-                                  {d.label}
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
                 </div>
               </div>
               {!isMultiplayer && (
@@ -2787,7 +2176,7 @@ const App = () => {
               const isAnimating = animatingPlayerIds.includes(p.id) || (animatingPlayerIds.includes('SPECIAL') && lastResult?.player !== p.name);
               return (
                 <div key={p.id} onClick={() => isManualSelectionPhase && togglePlayerSelection(p.id)}
-                  className={`bg-slate-950 p-4 rounded-2xl border flex flex-col gap-2 relative overflow-hidden transition-all duration-300 ${isManualSelectionPhase ? 'cursor-pointer hover:border-indigo-500' : ''} ${isSelected ? 'border-indigo-500 ring-4 ring-indigo-500/20 bg-indigo-500/5' : isAnimating ? (animatingType==='damage' ? 'border-red-500 ring-4 ring-red-500/20 bg-red-500/5' : 'border-emerald-500 ring-4 ring-emerald-500/20 bg-emerald-500/5') : (lowHp ? 'border-red-900 animate-pulse bg-red-950/10' : 'border-slate-800 hover:border-slate-700')}`}>
+                  className={`bg-slate-950 p-4 rounded-2xl border flex flex-col gap-2 relative overflow-hidden transition-all duration-300 ${isManualSelectionPhase ? 'cursor-pointer hover:border-indigo-500' : ''} ${isSelected ? 'border-indigo-500 ring-4 ring-indigo-500/20 bg-indigo-500/5' : isAnimating && (animatingType==='damage' || animatingType==='heal') ? (animatingType==='damage' ? 'border-red-500 ring-4 ring-red-500/20 bg-red-500/5' : 'border-emerald-500 ring-4 ring-emerald-500/20 bg-emerald-500/5') : (lowHp ? 'border-red-900 animate-pulse bg-red-950/10' : 'border-slate-800 hover:border-slate-700')}`}>
                   <div className="flex justify-between items-center">
                     <div className="flex items-center gap-2 truncate pr-2">
                       {isManualSelectionPhase && <div className={`w-4 h-4 rounded border shrink-0 flex items-center justify-center ${isSelected ? 'bg-indigo-600 border-indigo-600' : 'border-slate-700'}`}>{isSelected && <Check size={10} className="text-white"/>}</div>}
@@ -2812,7 +2201,7 @@ const App = () => {
                       <span className="text-[9px] font-black text-slate-500 tabular-nums">狙われやすさ: {targetedProb}%</span>
                     </div>
                   )}
-                  {isAnimating && (
+                  {isAnimating && (animatingType === 'damage' || animatingType === 'heal') && (
                     <div className={`absolute inset-0 flex items-center justify-center font-black text-2xl animate-out fade-out slide-out-to-top-8 duration-1000 ${animatingType==='damage' ? 'text-red-500' : 'text-emerald-400'}`}>
                       {animatingType==='damage' ? `-${lastResult?.amount}` : `+${lastResult?.amount}`}
                     </div>
@@ -2834,142 +2223,25 @@ const App = () => {
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
         [draggable="true"] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+        @keyframes barrierFadeOut { from { opacity: 1; } to { opacity: 0; } }
+        @keyframes barrierFadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .barrier-fadeout { animation: barrierFadeOut 0.6s ease-in forwards; }
+        .barrier-fadein { animation: barrierFadeIn 0.6s ease-out forwards; }
       `}}/>
 
-      {/* ===== マルチイベント モーダル ===== */}
-      {multiEventPhase && (() => {
-        // 自分のプレイヤー情報を取得
-        const myPlayer = players.find(p => p.uid === myUid);
-        // 自分が対象かどうか（シングルプレイは常にtrue）
-        const iAmTarget = !isMultiplayer || (myPlayer && multiEventTargets.some(t => t.id === myPlayer.id)) || false;
-        // ホストで対象外の場合は観戦UIを表示
-        const isHostObserver = isMultiplayer && isHost && !iAmTarget;
-
-        return (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-lg bg-slate-900 rounded-[2rem] border border-slate-700 shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto">
-
-            {/* ホスト観戦UI（対象外ホスト用） */}
-            {isHostObserver && (
-              <div className="p-6 text-center space-y-4">
-                <div className="text-3xl mb-2">👁️</div>
-                <h2 className="text-xl font-black text-white">マルチイベント発動中</h2>
-                <p className="text-slate-400 text-sm">
-                  {multiEventPhase === 'bomb' ? '💣 時限爆弾解除'
-                    : multiEventPhase === 'kanji_quiz' ? '漢 漢字クイズ'
-                    : multiEventPhase === 'math_quiz' ? '➕ 計算クイズ'
-                    : '🔤 英単語クイズ'}
-                </p>
-                <div className="bg-slate-950 rounded-xl p-3 text-left space-y-1">
-                  {multiEventTargets.map(t => (
-                    <div key={t.id} className="text-sm font-bold text-slate-300 flex items-center gap-2">
-                      <span className="text-amber-400">→</span> {t.name}
-                    </div>
-                  ))}
-                </div>
-                <p className="text-slate-500 text-xs animate-pulse">参加者が操作中... 自動で結果が反映されます</p>
-              </div>
-            )}
-
-            {/* 時限爆弾（対象者のみ） */}
-            {multiEventPhase === 'bomb' && (iAmTarget || !isMultiplayer) && (
-              <div className="p-6 space-y-4">
-                <div className="text-center">
-                  <div className="text-4xl mb-2">💣</div>
-                  <h2 className="text-2xl font-black text-white">時限爆弾解除チャレンジ</h2>
-                  <p className="text-slate-400 text-sm mt-1">爆発したらダメージ <span className="text-red-400 font-black">{multiEventDamage}</span></p>
-                </div>
-                <div className="space-y-4 max-h-80 overflow-y-auto custom-scrollbar">
-                  {bombData.map(b => {
-                    const player = multiEventTargets.find(p => p.id === b.playerId);
-                    const isMe = player?.uid === myUid;
-                    return (
-                      <div key={b.playerId} className={`p-4 rounded-xl border ${b.status==='cut' ? 'bg-emerald-900/20 border-emerald-500' : b.status==='exploded' || b.status==='wrong' ? 'bg-red-900/20 border-red-500' : 'bg-slate-950 border-slate-700'}`}>
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="font-black text-sm">{player?.name}</span>
-                          <div className={`text-sm font-black ${b.timeLeft <= 10 ? 'text-red-400 animate-pulse' : 'text-amber-400'}`}>⏱ {b.timeLeft}s</div>
-                        </div>
-                        {b.status === 'active' && (
-                          <>
-                            <p className="text-[10px] text-slate-400 mb-2">{b.wires}本の導線。正しい1本を切れ！</p>
-                            {isMe ? (
-                              <div className="flex flex-wrap gap-2">
-                                {Array.from({length: b.wires}).map((_,i) => (
-                                  <button key={i} onClick={() => cutWire(b.playerId, i)} className={`px-3 py-1.5 rounded-lg font-black text-xs border transition-all ${['bg-red-600 border-red-800','bg-blue-600 border-blue-800','bg-emerald-600 border-emerald-800','bg-amber-500 border-amber-700','bg-purple-600 border-purple-800','bg-pink-600 border-pink-800','bg-cyan-600 border-cyan-800','bg-orange-500 border-orange-700','bg-lime-600 border-lime-800','bg-rose-600 border-rose-800'][i % 10]} hover:brightness-125 active:scale-95`}>
-                                    導線{i+1}
-                                  </button>
-                                ))}
-                              </div>
-                            ) : <p className="text-[10px] text-slate-500">{player?.name}が選択中...</p>}
-                          </>
-                        )}
-                        {b.status === 'cut' && <p className="text-emerald-400 font-black text-sm">✅ 解除成功！</p>}
-                        {b.status === 'exploded' && <p className="text-red-400 font-black text-sm">💥 時間切れ！爆発！</p>}
-                        {b.status === 'wrong' && <p className="text-red-400 font-black text-sm">💥 間違えた！爆発！</p>}
-                      </div>
-                    );
-                  })}
-                </div>
-                {/* 全員終了待ち中の表示（自動確定するのでボタン不要） */}
-                {isMultiplayer && !bombData.every(b=>b.status!=='active') && (
-                  <p className="text-center text-slate-500 text-xs py-2">他のプレイヤーの結果を待機中...</p>
-                )}
-                {/* 全員終了後は自動でfinalizeBomb()が呼ばれる（useEffectで処理） */}
-              </div>
-            )}
-
-            {/* クイズ（漢字/計算/英単語共通）（対象者のみ） */}
-            {(multiEventPhase === 'kanji_quiz' || multiEventPhase === 'math_quiz' || multiEventPhase === 'english_quiz') && (iAmTarget || !isMultiplayer) && (
-              <div className="p-6 space-y-4">
-                <div className="text-center">
-                  <div className="text-4xl mb-2">
-                    {multiEventPhase === 'kanji_quiz' ? '漢' : multiEventPhase === 'math_quiz' ? '➕' : '🔤'}
-                  </div>
-                  <h2 className="text-xl font-black text-white">
-                    {multiEventPhase === 'kanji_quiz' ? '漢字クイズ' : multiEventPhase === 'math_quiz' ? '計算クイズ' : '英単語クイズ'}
-                  </h2>
-                  <div className="flex items-center justify-center gap-4 mt-2">
-                    <span className="text-slate-400 text-sm">全問正解でダメージ無効</span>
-                    <span className={`text-sm font-black ${quizTimeLeft <= 10 ? 'text-red-400 animate-pulse' : 'text-amber-400'}`}>⏱ {quizTimeLeft}s</span>
-                  </div>
-                  <p className="text-sm mt-1">失敗でダメージ <span className="text-red-400 font-black">{multiEventDamage}</span></p>
-                </div>
-                {quizLoading ? (
-                  <div className="text-center py-8 text-slate-400 animate-pulse">問題を生成中...</div>
-                ) : (
-                  <>
-                    <div className="flex gap-1 justify-center mb-2">
-                      {Array.from({length:5}).map((_,i) => (
-                        <button key={i} onClick={() => setQuizCurrentQ(i)} className={`w-8 h-8 rounded-full font-black text-xs border transition-all ${i === quizCurrentQ ? 'bg-indigo-600 border-indigo-400 text-white' : myQuizAnswers[i] !== null ? 'bg-emerald-700 border-emerald-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400'}`}>{i+1}</button>
-                      ))}
-                    </div>
-                    {quizQuestions[quizCurrentQ] && (
-                      <div className="bg-slate-950 rounded-2xl p-4 border border-slate-800 space-y-3">
-                        <p className="font-black text-white text-center text-lg">{quizQuestions[quizCurrentQ].q}</p>
-                        <div className="grid grid-cols-2 gap-2">
-                          {quizQuestions[quizCurrentQ].choices.map((c, ci) => (
-                            <button key={ci} onClick={() => answerQuiz(quizCurrentQ, ci)} className={`py-3 rounded-xl font-bold text-sm border transition-all active:scale-95 ${myQuizAnswers[quizCurrentQ] === ci ? 'bg-indigo-600 border-indigo-400 text-white' : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-indigo-500'}`}>
-                              {c}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    <button
-                      onClick={submitQuiz}
-                      disabled={myQuizAnswers.some(a => a === null) && quizTimeLeft > 0}
-                      className={`w-full py-3 font-black rounded-xl transition-all ${myQuizAnswers.every(a => a !== null) || quizTimeLeft === 0 ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-slate-800 text-slate-500 border border-slate-700'}`}>
-                      {quizTimeLeft === 0 ? '時間切れ！提出' : myQuizAnswers.every(a => a !== null) ? '回答提出！' : `残り ${myQuizAnswers.filter(a=>a!==null).length}/5 問`}
-                    </button>
-                  </>
-                )}
-              </div>
-            )}
-
+      {/* ===== バリアメガ付与フェードオーバーレイ ===== */}
+      {barrierMegaAnimPhase && (
+        <div className={`fixed inset-0 z-50 flex items-center justify-center pointer-events-none ${barrierMegaAnimPhase === 'fadeout' ? 'barrier-fadeout' : barrierMegaAnimPhase === 'fadein' ? 'barrier-fadein' : ''}`}
+          style={{ background: 'rgba(0,0,0,0.85)', opacity: barrierMegaAnimPhase === 'result' ? 1 : undefined }}>
+          <div className="text-center space-y-4 px-8">
+            <div className="text-7xl animate-bounce">🛡️</div>
+            <div className="text-4xl font-black text-cyan-300 drop-shadow-[0_0_20px_rgba(34,211,238,0.8)]">✨ バリアカード10枚 ✨</div>
+            <div className="text-2xl font-bold text-white">{barrierMegaTarget} が獲得！</div>
+            <div className="text-lg text-cyan-400 font-black tracking-widest">BARRIER +10</div>
           </div>
         </div>
-        );
-      })()}
+      )}
+
     </div>
   );
 };
