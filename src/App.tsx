@@ -1023,14 +1023,14 @@ const App = () => {
       // フェードアウト演出開始
       setBarrierMegaTarget(chosenPlayer.name);
       setBarrierMegaAnimPhase('fadeout');
-      await new Promise(r => setTimeout(r, 600));
-      // 結果表示
+      await new Promise(r => setTimeout(r, 500));
+      // 結果表示（アニメーション込みで3秒表示）
       setBarrierMegaAnimPhase('result');
       await updateDisplayResultMulti({ player: `✨🛡️ ${chosenPlayer.name}`, amount: 'BARRIER+10' });
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, 3200));
       // フェードイン
       setBarrierMegaAnimPhase('fadein');
-      await new Promise(r => setTimeout(r, 600));
+      await new Promise(r => setTimeout(r, 500));
       setBarrierMegaAnimPhase(null);
 
       if (isMultiplayer && currentRoomId) {
@@ -2225,20 +2225,170 @@ const App = () => {
         [draggable="true"] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
         @keyframes barrierFadeOut { from { opacity: 1; } to { opacity: 0; } }
         @keyframes barrierFadeIn { from { opacity: 0; } to { opacity: 1; } }
-        .barrier-fadeout { animation: barrierFadeOut 0.6s ease-in forwards; }
-        .barrier-fadein { animation: barrierFadeIn 0.6s ease-out forwards; }
+        .barrier-fadeout { animation: barrierFadeOut 0.5s ease-in forwards; }
+        .barrier-fadein { animation: barrierFadeIn 0.5s ease-out forwards; }
+
+        /* ===== バリアメガ演出専用アニメーション ===== */
+        @keyframes bmRipple {
+          0%   { transform: translate(-50%,-50%) scale(0.2); opacity: 0.9; }
+          100% { transform: translate(-50%,-50%) scale(3.5); opacity: 0; }
+        }
+        @keyframes bmStar {
+          0%   { transform: translate(-50%,-50%) scale(0) rotate(0deg);   opacity: 1; }
+          60%  { transform: translate(-50%,-50%) scale(1.4) rotate(180deg); opacity: 1; }
+          100% { transform: translate(-50%,-50%) scale(0.8) rotate(270deg); opacity: 0; }
+        }
+        @keyframes bmIconDrop {
+          0%   { transform: translateY(-40px) scale(0.5); opacity: 0; }
+          60%  { transform: translateY(8px) scale(1.15); opacity: 1; }
+          80%  { transform: translateY(-4px) scale(1.05); }
+          100% { transform: translateY(0) scale(1); opacity: 1; }
+        }
+        @keyframes bmTextReveal {
+          0%   { opacity: 0; transform: scale(0.6) translateY(16px); letter-spacing: 0.05em; }
+          70%  { opacity: 1; transform: scale(1.08) translateY(-3px); letter-spacing: 0.18em; }
+          100% { opacity: 1; transform: scale(1) translateY(0);       letter-spacing: 0.12em; }
+        }
+        @keyframes bmSubText {
+          0%   { opacity: 0; transform: translateY(12px); }
+          100% { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes bmPulse {
+          0%,100% { text-shadow: 0 0 10px #67e8f9, 0 0 28px #22d3ee, 0 0 55px #0891b2; }
+          50%      { text-shadow: 0 0 20px #a5f3fc, 0 0 50px #67e8f9, 0 0 90px #22d3ee; }
+        }
+        @keyframes bmShieldFloat {
+          0%,100% { transform: translateY(0px) scale(1); filter: drop-shadow(0 0 14px #22d3ee); }
+          50%      { transform: translateY(-10px) scale(1.08); filter: drop-shadow(0 0 28px #67e8f9); }
+        }
+        @keyframes bmParticle {
+          0%   { transform: translate(0,0) scale(1); opacity: 0.9; }
+          100% { transform: var(--px, translate(60px,-80px)) scale(0); opacity: 0; }
+        }
+        @keyframes bmBannerSlide {
+          0%   { transform: translateY(-60px); opacity: 0; }
+          100% { transform: translateY(0);     opacity: 1; }
+        }
+        @keyframes bmCounterGlow {
+          0%,100% { color: #67e8f9; text-shadow: 0 0 8px #22d3ee; }
+          50%      { color: #ffffff; text-shadow: 0 0 20px #a5f3fc, 0 0 40px #67e8f9; }
+        }
+        .bm-icon     { animation: bmIconDrop 0.7s cubic-bezier(0.34,1.56,0.64,1) 0.3s both; }
+        .bm-main     { animation: bmTextReveal 0.8s cubic-bezier(0.34,1.56,0.64,1) 0.8s both, bmPulse 2s ease-in-out 1.5s infinite; }
+        .bm-sub      { animation: bmSubText 0.5s ease-out 1.4s both; }
+        .bm-badge    { animation: bmSubText 0.5s ease-out 1.7s both, bmCounterGlow 1.5s ease-in-out 2.2s infinite; }
+        .bm-banner   { animation: bmBannerSlide 0.6s cubic-bezier(0.34,1.56,0.64,1) 0.1s both; }
+        .bm-shield   { animation: bmShieldFloat 2.5s ease-in-out 1.0s infinite; }
+        .bm-ripple   { animation: bmRipple 1.4s ease-out forwards; }
+        .bm-ripple2  { animation: bmRipple 1.4s ease-out 0.25s forwards; }
+        .bm-ripple3  { animation: bmRipple 1.4s ease-out 0.5s forwards; }
+        .bm-star     { animation: bmStar 1.0s ease-out forwards; }
       `}}/>
 
       {/* ===== バリアメガ付与フェードオーバーレイ ===== */}
       {barrierMegaAnimPhase && (
-        <div className={`fixed inset-0 z-50 flex items-center justify-center pointer-events-none ${barrierMegaAnimPhase === 'fadeout' ? 'barrier-fadeout' : barrierMegaAnimPhase === 'fadein' ? 'barrier-fadein' : ''}`}
-          style={{ background: 'rgba(0,0,0,0.85)', opacity: barrierMegaAnimPhase === 'result' ? 1 : undefined }}>
-          <div className="text-center space-y-4 px-8">
-            <div className="text-7xl animate-bounce">🛡️</div>
-            <div className="text-4xl font-black text-cyan-300 drop-shadow-[0_0_20px_rgba(34,211,238,0.8)]">✨ バリアカード10枚 ✨</div>
-            <div className="text-2xl font-bold text-white">{barrierMegaTarget} が獲得！</div>
-            <div className="text-lg text-cyan-400 font-black tracking-widest">BARRIER +10</div>
+        <div
+          className={`fixed inset-0 z-50 flex flex-col items-center justify-center pointer-events-none
+            ${barrierMegaAnimPhase === 'fadeout' ? 'barrier-fadeout' : barrierMegaAnimPhase === 'fadein' ? 'barrier-fadein' : ''}`}
+          style={{
+            background: 'radial-gradient(ellipse at center, #1a0044 0%, #06001a 55%, #000000 100%)',
+            opacity: barrierMegaAnimPhase === 'result' ? 1 : undefined,
+          }}
+        >
+          {/* 粒子エフェクト（固定位置に散らばる小丸） */}
+          {[
+            { top:'18%', left:'22%', size:6,  delay:'0.1s', px:'translate(-70px,-90px)' },
+            { top:'15%', left:'72%', size:5,  delay:'0.3s', px:'translate(60px,-100px)' },
+            { top:'75%', left:'18%', size:7,  delay:'0.2s', px:'translate(-80px,70px)' },
+            { top:'78%', left:'78%', size:5,  delay:'0.4s', px:'translate(90px,80px)' },
+            { top:'30%', left:'12%', size:4,  delay:'0.5s', px:'translate(-50px,-40px)' },
+            { top:'65%', left:'85%', size:4,  delay:'0.15s',px:'translate(70px,50px)' },
+            { top:'50%', left:'8%',  size:5,  delay:'0.35s',px:'translate(-90px,0px)' },
+            { top:'50%', left:'92%', size:5,  delay:'0.25s',px:'translate(90px,0px)' },
+          ].map((p, i) => (
+            <div key={i} style={{
+              position:'absolute', top: p.top, left: p.left,
+              width: p.size, height: p.size, borderRadius:'50%',
+              background:'#67e8f9', boxShadow:'0 0 6px #22d3ee',
+              '--px': p.px,
+              animationDelay: p.delay,
+              animation: `bmParticle 1.8s ease-out ${p.delay} both`,
+            } as React.CSSProperties}/>
+          ))}
+
+          {/* 波紋エフェクト（中央から広がる3重リング） */}
+          <div style={{position:'absolute',top:'50%',left:'50%',width:180,height:180,borderRadius:'50%',border:'2px solid rgba(103,232,249,0.7)',boxShadow:'0 0 12px rgba(34,211,238,0.5)'}} className="bm-ripple"/>
+          <div style={{position:'absolute',top:'50%',left:'50%',width:180,height:180,borderRadius:'50%',border:'2px solid rgba(103,232,249,0.5)',boxShadow:'0 0 12px rgba(34,211,238,0.3)'}} className="bm-ripple2"/>
+          <div style={{position:'absolute',top:'50%',left:'50%',width:180,height:180,borderRadius:'50%',border:'2px solid rgba(103,232,249,0.3)'}} className="bm-ripple3"/>
+
+          {/* 星型閃光エフェクト */}
+          <div style={{
+            position:'absolute', top:'50%', left:'50%',
+            fontSize:80, lineHeight:1,
+            filter:'drop-shadow(0 0 30px rgba(103,232,249,0.9))',
+          }} className="bm-star">✦</div>
+
+          {/* 上部バナー */}
+          <div className="bm-banner" style={{
+            position:'absolute', top:'12%',
+            background:'linear-gradient(90deg, rgba(8,145,178,0.15) 0%, rgba(103,232,249,0.25) 50%, rgba(8,145,178,0.15) 100%)',
+            border:'1px solid rgba(103,232,249,0.5)',
+            borderRadius:12, paddingLeft:32, paddingRight:32,
+            paddingTop:8, paddingBottom:8,
+            boxShadow:'0 0 20px rgba(34,211,238,0.3)',
+          }}>
+            <span style={{color:'#a5f3fc', fontWeight:900, fontSize:14, letterSpacing:'0.3em', textTransform:'uppercase'}}>
+              ✦ SPECIAL EVENT ✦
+            </span>
           </div>
+
+          {/* メインコンテンツ */}
+          <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:20,zIndex:1}}>
+            {/* シールドアイコン */}
+            <div className="bm-icon" style={{fontSize:96, lineHeight:1}} >
+              <span className="bm-shield" style={{display:'inline-block'}}>🛡️</span>
+            </div>
+
+            {/* メインテキスト */}
+            <div className="bm-main" style={{
+              fontSize:36, fontWeight:900, textAlign:'center',
+              color:'#e0f7ff',
+              letterSpacing:'0.12em',
+              textShadow:'0 0 10px #67e8f9, 0 0 28px #22d3ee, 0 0 55px #0891b2',
+            }}>
+              バリアカード10枚
+            </div>
+
+            {/* プレイヤー名 */}
+            <div className="bm-sub" style={{
+              fontSize:22, fontWeight:700, color:'#ffffff',
+              textShadow:'0 2px 8px rgba(0,0,0,0.8)',
+              textAlign:'center', maxWidth:280,
+            }}>
+              {barrierMegaTarget} が獲得！
+            </div>
+
+            {/* BARRIER +10 バッジ */}
+            <div className="bm-badge" style={{
+              background:'linear-gradient(135deg, rgba(8,145,178,0.3) 0%, rgba(103,232,249,0.2) 100%)',
+              border:'1.5px solid rgba(103,232,249,0.6)',
+              borderRadius:8, padding:'6px 24px',
+              fontSize:18, fontWeight:900, letterSpacing:'0.25em',
+              color:'#67e8f9',
+              boxShadow:'0 0 16px rgba(34,211,238,0.4)',
+            }}>
+              BARRIER +10
+            </div>
+          </div>
+
+          {/* 背景の放射光 */}
+          <div style={{
+            position:'absolute', top:'50%', left:'50%',
+            transform:'translate(-50%,-50%)',
+            width:320, height:320, borderRadius:'50%',
+            background:'radial-gradient(circle, rgba(103,232,249,0.07) 0%, transparent 70%)',
+            pointerEvents:'none',
+          }}/>
         </div>
       )}
 
