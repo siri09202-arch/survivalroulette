@@ -377,6 +377,470 @@ const convertNumber = (num: number | string, format: string): string | number =>
   }
 };
 
+// ===== 日本の一般国道データ =====
+interface JapanRoad { no: number; from: string; to: string; }
+const JAPAN_ROADS: JapanRoad[] = [
+  { no:1,   from:'東京都中央区',         to:'大阪府大阪市北区' },
+  { no:2,   from:'大阪府大阪市北区',     to:'福岡県北九州市門司区' },
+  { no:3,   from:'福岡県北九州市門司区', to:'鹿児島県鹿児島市' },
+  { no:4,   from:'東京都中央区',         to:'青森県青森市' },
+  { no:5,   from:'北海道函館市',         to:'北海道札幌市中央区' },
+  { no:6,   from:'東京都中央区',         to:'宮城県仙台市宮城野区' },
+  { no:7,   from:'新潟県新潟市中央区',   to:'青森県青森市' },
+  { no:8,   from:'新潟県新潟市中央区',   to:'京都府京都市下京区' },
+  { no:9,   from:'京都府京都市下京区',   to:'山口県下関市' },
+  { no:10,  from:'福岡県北九州市門司区', to:'鹿児島県鹿児島市' },
+  { no:11,  from:'徳島県徳島市',         to:'愛媛県松山市' },
+  { no:12,  from:'北海道札幌市中央区',   to:'北海道旭川市' },
+  { no:13,  from:'福島県福島市',         to:'秋田県秋田市' },
+  { no:14,  from:'東京都中央区',         to:'千葉県千葉市中央区' },
+  { no:15,  from:'東京都中央区',         to:'神奈川県横浜市神奈川区' },
+  { no:16,  from:'神奈川県横浜市西区',   to:'神奈川県横浜市西区' },
+  { no:17,  from:'東京都中央区',         to:'新潟県新潟市中央区' },
+  { no:18,  from:'群馬県高崎市',         to:'新潟県上越市' },
+  { no:19,  from:'愛知県名古屋市熱田区', to:'長野県長野市' },
+  { no:20,  from:'東京都中央区',         to:'長野県塩尻市' },
+  { no:21,  from:'岐阜県瑞浪市',         to:'滋賀県米原市' },
+  { no:22,  from:'愛知県名古屋市熱田区', to:'岐阜県岐阜市' },
+  { no:23,  from:'愛知県豊橋市',         to:'三重県伊勢市' },
+  { no:24,  from:'京都府京都市下京区',   to:'和歌山県和歌山市' },
+  { no:25,  from:'三重県四日市市',       to:'大阪府大阪市北区' },
+  { no:26,  from:'大阪府大阪市北区',     to:'和歌山県和歌山市' },
+  { no:27,  from:'福井県敦賀市',         to:'京都府船井郡京丹波町' },
+  { no:28,  from:'兵庫県神戸市中央区',   to:'徳島県徳島市' },
+  { no:29,  from:'兵庫県姫路市',         to:'鳥取県鳥取市' },
+  { no:30,  from:'岡山県岡山市北区',     to:'香川県高松市' },
+  { no:31,  from:'広島県安芸郡海田町',   to:'広島県呉市' },
+  { no:32,  from:'香川県高松市',         to:'高知県高知市' },
+  { no:33,  from:'高知県高知市',         to:'愛媛県松山市' },
+  { no:34,  from:'佐賀県鳥栖市',         to:'長崎県長崎市' },
+  { no:35,  from:'佐賀県武雄市',         to:'長崎県佐世保市' },
+  { no:36,  from:'北海道札幌市中央区',   to:'北海道室蘭市' },
+  { no:37,  from:'北海道山越郡長万部町', to:'北海道室蘭市' },
+  { no:38,  from:'北海道滝川市',         to:'北海道釧路市' },
+  { no:39,  from:'北海道旭川市',         to:'北海道網走市' },
+  { no:40,  from:'北海道旭川市',         to:'北海道稚内市' },
+  { no:41,  from:'愛知県名古屋市東区',   to:'富山県富山市' },
+  { no:42,  from:'静岡県浜松市中央区',   to:'和歌山県和歌山市' },
+  { no:43,  from:'大阪府大阪市西成区',   to:'兵庫県神戸市灘区' },
+  { no:44,  from:'北海道釧路市',         to:'北海道根室市' },
+  { no:45,  from:'宮城県仙台市青葉区',   to:'青森県青森市' },
+  { no:46,  from:'岩手県盛岡市',         to:'秋田県秋田市' },
+  { no:47,  from:'宮城県仙台市宮城野区', to:'山形県酒田市' },
+  { no:48,  from:'宮城県仙台市青葉区',   to:'山形県山形市' },
+  { no:49,  from:'福島県いわき市',       to:'新潟県新潟市中央区' },
+  { no:50,  from:'群馬県前橋市',         to:'茨城県水戸市' },
+  { no:51,  from:'千葉県千葉市中央区',   to:'茨城県水戸市' },
+  { no:52,  from:'静岡県静岡市清水区',   to:'山梨県甲府市' },
+  { no:53,  from:'岡山県岡山市北区',     to:'鳥取県鳥取市' },
+  { no:54,  from:'広島県広島市中区',     to:'島根県松江市' },
+  { no:55,  from:'徳島県徳島市',         to:'高知県高知市' },
+  { no:56,  from:'高知県高知市',         to:'愛媛県松山市' },
+  { no:57,  from:'大分県大分市',         to:'長崎県長崎市' },
+  { no:58,  from:'鹿児島県鹿児島市',     to:'沖縄県那覇市' },
+  { no:101, from:'青森県青森市',         to:'秋田県秋田市' },
+  { no:102, from:'青森県弘前市',         to:'青森県十和田市' },
+  { no:103, from:'青森県青森市',         to:'秋田県大館市' },
+  { no:104, from:'青森県八戸市',         to:'秋田県大館市' },
+  { no:105, from:'秋田県由利本荘市',     to:'秋田県北秋田市' },
+  { no:106, from:'岩手県宮古市',         to:'岩手県盛岡市' },
+  { no:107, from:'岩手県大船渡市',       to:'秋田県由利本荘市' },
+  { no:108, from:'宮城県石巻市',         to:'秋田県由利本荘市' },
+  { no:112, from:'山形県山形市',         to:'山形県酒田市' },
+  { no:113, from:'新潟県新潟市中央区',   to:'福島県相馬市' },
+  { no:114, from:'福島県福島市',         to:'福島県双葉郡浪江町' },
+  { no:115, from:'福島県相馬市',         to:'福島県耶麻郡猪苗代町' },
+  { no:116, from:'新潟県柏崎市',         to:'新潟県新潟市中央区' },
+  { no:117, from:'長野県長野市',         to:'新潟県小千谷市' },
+  { no:118, from:'茨城県水戸市',         to:'福島県会津若松市' },
+  { no:119, from:'栃木県日光市',         to:'栃木県宇都宮市' },
+  { no:120, from:'栃木県日光市',         to:'群馬県沼田市' },
+  { no:121, from:'山形県米沢市',         to:'栃木県芳賀郡益子町' },
+  { no:122, from:'栃木県日光市',         to:'東京都豊島区' },
+  { no:123, from:'栃木県宇都宮市',       to:'茨城県水戸市' },
+  { no:124, from:'千葉県銚子市',         to:'茨城県水戸市' },
+  { no:125, from:'千葉県香取市',         to:'埼玉県熊谷市' },
+  { no:126, from:'千葉県銚子市',         to:'千葉県千葉市中央区' },
+  { no:127, from:'千葉県館山市',         to:'千葉県木更津市' },
+  { no:128, from:'千葉県館山市',         to:'千葉県千葉市中央区' },
+  { no:129, from:'神奈川県平塚市',       to:'神奈川県相模原市' },
+  { no:130, from:'東京都港区・東京港',   to:'東京都港区芝一丁目' },
+  { no:131, from:'東京都大田区・羽田空港',to:'東京都大田区大森東二丁目' },
+  { no:132, from:'神奈川県川崎市川崎区・川崎港',to:'神奈川県川崎市川崎区宮前町' },
+  { no:133, from:'神奈川県横浜市中区・横浜港',to:'神奈川県横浜市中区桜木町' },
+  { no:134, from:'神奈川県横須賀市',     to:'神奈川県中郡大磯町' },
+  { no:135, from:'静岡県下田市',         to:'神奈川県小田原市' },
+  { no:136, from:'静岡県下田市',         to:'静岡県三島市' },
+  { no:137, from:'山梨県富士吉田市',     to:'山梨県笛吹市' },
+  { no:138, from:'山梨県富士吉田市',     to:'神奈川県小田原市' },
+  { no:139, from:'静岡県富士市',         to:'東京都西多摩郡奥多摩町' },
+  { no:140, from:'埼玉県熊谷市',         to:'山梨県南巨摩郡富士川町' },
+  { no:141, from:'山梨県韮崎市',         to:'長野県上田市' },
+  { no:142, from:'長野県北佐久郡軽井沢町',to:'長野県諏訪郡下諏訪町' },
+  { no:143, from:'長野県松本市',         to:'長野県上田市' },
+  { no:144, from:'群馬県吾妻郡長野原町', to:'長野県上田市' },
+  { no:145, from:'群馬県吾妻郡長野原町', to:'群馬県沼田市' },
+  { no:146, from:'群馬県吾妻郡長野原町', to:'長野県北佐久郡軽井沢町' },
+  { no:147, from:'長野県大町市',         to:'長野県松本市' },
+  { no:148, from:'長野県大町市',         to:'新潟県糸魚川市' },
+  { no:149, from:'静岡県静岡市清水区・清水港',to:'静岡県静岡市清水区大和町' },
+  { no:150, from:'静岡県静岡市清水区',   to:'静岡県浜松市中央区' },
+  { no:151, from:'長野県飯田市',         to:'愛知県豊橋市' },
+  { no:152, from:'長野県上田市',         to:'静岡県浜松市中央区' },
+  { no:153, from:'愛知県名古屋市東区',   to:'長野県塩尻市' },
+  { no:154, from:'愛知県名古屋市港区・名古屋港',to:'愛知県名古屋市熱田区' },
+  { no:155, from:'愛知県常滑市',         to:'愛知県弥富市' },
+  { no:156, from:'岐阜県岐阜市',         to:'富山県高岡市' },
+  { no:157, from:'石川県金沢市',         to:'岐阜県岐阜市' },
+  { no:158, from:'福井県福井市',         to:'長野県松本市' },
+  { no:159, from:'石川県七尾市',         to:'石川県金沢市' },
+  { no:160, from:'石川県七尾市',         to:'富山県高岡市' },
+  { no:161, from:'福井県敦賀市',         to:'滋賀県大津市' },
+  { no:162, from:'京都府京都市右京区',   to:'福井県敦賀市' },
+  { no:163, from:'大阪府大阪市北区',     to:'三重県津市' },
+  { no:164, from:'三重県四日市市',       to:'三重県津市' },
+  { no:165, from:'大阪府大阪市北区',     to:'三重県津市' },
+  { no:166, from:'大阪府羽曳野市',       to:'三重県松阪市' },
+  { no:167, from:'三重県志摩市',         to:'三重県伊勢市' },
+  { no:168, from:'和歌山県新宮市',       to:'大阪府枚方市' },
+  { no:169, from:'奈良県奈良市',         to:'和歌山県新宮市' },
+  { no:170, from:'大阪府高槻市',         to:'大阪府泉佐野市' },
+  { no:171, from:'京都府京都市南区',     to:'兵庫県神戸市中央区' },
+  { no:172, from:'大阪府大阪市港区・大阪港',to:'大阪府大阪市中央区' },
+  { no:173, from:'大阪府池田市',         to:'京都府綾部市' },
+  { no:174, from:'兵庫県神戸市中央区・神戸港',to:'兵庫県神戸市中央区' },
+  { no:175, from:'兵庫県明石市',         to:'京都府舞鶴市' },
+  { no:176, from:'京都府宮津市',         to:'大阪府大阪市北区' },
+  { no:177, from:'京都府舞鶴市・舞鶴港', to:'京都府舞鶴市字魚屋' },
+  { no:178, from:'京都府舞鶴市',         to:'鳥取県岩美郡岩美町' },
+  { no:179, from:'兵庫県姫路市',         to:'鳥取県東伯郡湯梨浜町' },
+  { no:180, from:'岡山県岡山市北区',     to:'島根県松江市' },
+  { no:181, from:'岡山県津山市',         to:'鳥取県米子市' },
+  { no:182, from:'岡山県新見市',         to:'広島県福山市' },
+  { no:183, from:'広島県広島市中区',     to:'鳥取県米子市' },
+  { no:184, from:'島根県出雲市',         to:'広島県尾道市' },
+  { no:185, from:'広島県呉市',           to:'広島県三原市' },
+  { no:186, from:'島根県江津市',         to:'広島県大竹市' },
+  { no:187, from:'山口県岩国市',         to:'島根県益田市' },
+  { no:188, from:'山口県岩国市',         to:'山口県下松市' },
+  { no:189, from:'山口県岩国市・岩国空港',to:'山口県岩国市麻里布町一丁目' },
+  { no:190, from:'山口県山口市',         to:'山口県山陽小野田市' },
+  { no:191, from:'山口県下関市',         to:'広島県広島市中区' },
+  { no:192, from:'愛媛県西条市',         to:'徳島県徳島市' },
+  { no:193, from:'香川県高松市',         to:'徳島県海部郡海陽町' },
+  { no:194, from:'高知県高知市',         to:'愛媛県西条市' },
+  { no:195, from:'高知県高知市',         to:'徳島県徳島市' },
+  { no:196, from:'愛媛県松山市',         to:'愛媛県西条市' },
+  { no:197, from:'高知県高知市',         to:'大分県大分市' },
+  { no:198, from:'福岡県北九州市門司区', to:'福岡県北九州市門司区' },
+  { no:199, from:'福岡県北九州市門司区', to:'福岡県北九州市八幡西区' },
+  { no:200, from:'福岡県北九州市八幡西区',to:'福岡県筑紫野市' },
+  { no:201, from:'福岡県福岡市東区',     to:'大分県日田市' },
+  { no:202, from:'福岡県福岡市博多区',   to:'長崎県長崎市' },
+  { no:203, from:'佐賀県唐津市',         to:'佐賀県佐賀市' },
+  { no:204, from:'佐賀県唐津市',         to:'長崎県佐世保市' },
+  { no:205, from:'長崎県佐世保市',       to:'長崎県東彼杵郡東彼杵町' },
+  { no:206, from:'長崎県長崎市',         to:'長崎県佐世保市' },
+  { no:207, from:'佐賀県佐賀市',         to:'長崎県西彼杵郡時津町' },
+  { no:208, from:'熊本県熊本市中央区',   to:'佐賀県佐賀市' },
+  { no:209, from:'福岡県大牟田市',       to:'福岡県久留米市' },
+  { no:210, from:'福岡県久留米市',       to:'大分県大分市' },
+  { no:211, from:'大分県日田市',         to:'福岡県北九州市八幡西区' },
+  { no:212, from:'大分県中津市',         to:'熊本県阿蘇市' },
+  { no:213, from:'大分県別府市',         to:'大分県中津市' },
+  { no:217, from:'大分県大分市',         to:'大分県佐伯市' },
+  { no:218, from:'熊本県熊本市中央区',   to:'宮崎県延岡市' },
+  { no:219, from:'熊本県熊本市中央区',   to:'宮崎県宮崎市' },
+  { no:220, from:'宮崎県宮崎市',         to:'鹿児島県霧島市' },
+  { no:221, from:'宮崎県人吉市',         to:'宮崎県都城市' },
+  { no:222, from:'宮崎県日南市',         to:'宮崎県都城市' },
+  { no:223, from:'宮崎県小林市',         to:'鹿児島県霧島市' },
+  { no:224, from:'鹿児島県鹿児島市',     to:'鹿児島県鹿児島市' },
+  { no:225, from:'鹿児島県鹿児島市',     to:'鹿児島県枕崎市' },
+  { no:226, from:'鹿児島県鹿児島市',     to:'鹿児島県南さつま市' },
+  { no:227, from:'北海道函館市',         to:'北海道檜山郡江差町' },
+  { no:228, from:'北海道函館市',         to:'北海道檜山郡江差町' },
+  { no:229, from:'北海道小樽市',         to:'北海道檜山郡江差町' },
+  { no:230, from:'北海道札幌市中央区',   to:'北海道久遠郡せたな町' },
+  { no:231, from:'北海道札幌市北区',     to:'北海道留萌市' },
+  { no:232, from:'北海道稚内市',         to:'北海道留萌市' },
+  { no:233, from:'北海道旭川市',         to:'北海道留萌市' },
+  { no:234, from:'北海道岩見沢市',       to:'北海道苫小牧市' },
+  { no:235, from:'北海道室蘭市',         to:'北海道浦河郡浦河町' },
+  { no:236, from:'北海道帯広市',         to:'北海道浦河郡浦河町' },
+  { no:237, from:'北海道旭川市',         to:'北海道浦河郡浦河町' },
+  { no:238, from:'北海道網走市',         to:'北海道稚内市' },
+  { no:239, from:'北海道網走市',         to:'北海道留萌市' },
+  { no:240, from:'北海道釧路市',         to:'北海道網走市' },
+  { no:241, from:'北海道川上郡弟子屈町', to:'北海道帯広市' },
+  { no:242, from:'北海道網走市',         to:'北海道帯広市' },
+  { no:243, from:'北海道網走市',         to:'北海道根室市' },
+  { no:244, from:'北海道網走市',         to:'北海道根室市' },
+  { no:245, from:'茨城県水戸市',         to:'茨城県日立市' },
+  { no:246, from:'東京都千代田区',       to:'静岡県沼津市' },
+  { no:247, from:'愛知県名古屋市熱田区', to:'愛知県豊橋市' },
+  { no:248, from:'愛知県蒲郡市',         to:'岐阜県岐阜市' },
+  { no:249, from:'石川県七尾市',         to:'石川県金沢市' },
+  { no:250, from:'兵庫県神戸市長田区',   to:'岡山県岡山市北区' },
+  { no:251, from:'長崎県長崎市',         to:'長崎県諫早市' },
+  { no:252, from:'新潟県柏崎市',         to:'福島県会津若松市' },
+  { no:253, from:'新潟県上越市',         to:'新潟県南魚沼市' },
+  { no:254, from:'東京都文京区',         to:'長野県松本市' },
+  { no:255, from:'神奈川県秦野市',       to:'神奈川県小田原市' },
+  { no:256, from:'岐阜県岐阜市',         to:'長野県飯田市' },
+  { no:257, from:'静岡県浜松市中央区',   to:'岐阜県高山市' },
+  { no:258, from:'岐阜県大垣市',         to:'三重県桑名市' },
+  { no:259, from:'三重県鳥羽市',         to:'愛知県豊橋市' },
+  { no:260, from:'三重県志摩市',         to:'三重県北牟婁郡紀北町' },
+  { no:261, from:'広島県広島市中区',     to:'島根県江津市' },
+  { no:262, from:'山口県萩市',           to:'山口県防府市' },
+  { no:263, from:'福岡県福岡市早良区',   to:'佐賀県佐賀市' },
+  { no:264, from:'佐賀県佐賀市',         to:'福岡県久留米市' },
+  { no:265, from:'宮崎県小林市',         to:'熊本県阿蘇市' },
+  { no:266, from:'熊本県天草市',         to:'熊本県熊本市' },
+  { no:267, from:'熊本県人吉市',         to:'鹿児島県薩摩川内市' },
+  { no:268, from:'熊本県熊本市',         to:'宮崎県宮崎市' },
+  { no:269, from:'鹿児島県指宿市',       to:'宮崎県宮崎市' },
+  { no:270, from:'鹿児島県枕崎市',       to:'鹿児島県いちき串木野市' },
+  { no:271, from:'神奈川県小田原市',     to:'神奈川県厚木市' },
+  { no:272, from:'北海道釧路市',         to:'北海道標津郡標津町' },
+  { no:273, from:'北海道帯広市',         to:'北海道紋別市' },
+  { no:274, from:'北海道札幌市北区',     to:'北海道川上郡標茶町' },
+  { no:275, from:'北海道札幌市中央区',   to:'北海道枝幸郡浜頓別町' },
+  { no:276, from:'北海道檜山郡江差町',   to:'北海道苫小牧市' },
+  { no:277, from:'北海道檜山郡江差町',   to:'北海道二海郡八雲町' },
+  { no:278, from:'北海道函館市',         to:'北海道茅部郡森町' },
+  { no:279, from:'北海道函館市',         to:'青森県上北郡野辺地町' },
+  { no:280, from:'青森県青森市',         to:'北海道函館市' },
+  { no:281, from:'岩手県盛岡市',         to:'岩手県久慈市' },
+  { no:282, from:'岩手県盛岡市',         to:'青森県平川市' },
+  { no:283, from:'岩手県釜石市',         to:'岩手県花巻市' },
+  { no:284, from:'岩手県陸前高田市',     to:'岩手県一関市' },
+  { no:285, from:'秋田県秋田市',         to:'秋田県鹿角市' },
+  { no:286, from:'宮城県仙台市太白区',   to:'山形県山形市' },
+  { no:287, from:'山形県米沢市',         to:'山形県東根市' },
+  { no:288, from:'福島県郡山市',         to:'福島県双葉郡双葉町' },
+  { no:289, from:'新潟県新潟市中央区',   to:'福島県いわき市' },
+  { no:290, from:'新潟県村上市',         to:'新潟県魚沼市' },
+  { no:291, from:'群馬県前橋市',         to:'新潟県柏崎市' },
+  { no:292, from:'群馬県吾妻郡長野原町', to:'新潟県妙高市' },
+  { no:293, from:'茨城県日立市',         to:'栃木県足利市' },
+  { no:294, from:'千葉県柏市',           to:'福島県会津若松市' },
+  { no:295, from:'千葉県成田市・成田国際空港',to:'千葉県成田市' },
+  { no:296, from:'千葉県匝瑳市',         to:'千葉県船橋市' },
+  { no:297, from:'千葉県館山市',         to:'千葉県市原市' },
+  { no:298, from:'埼玉県和光市',         to:'千葉県市川市' },
+  { no:299, from:'長野県茅野市',         to:'埼玉県入間市' },
+  { no:300, from:'山梨県富士吉田市',     to:'山梨県南巨摩郡身延町' },
+  { no:301, from:'静岡県浜松市中央区',   to:'愛知県豊田市' },
+  { no:302, from:'愛知県名古屋市中川区', to:'愛知県名古屋市中川区' },
+  { no:303, from:'岐阜県岐阜市',         to:'福井県三方上中郡若狭町' },
+  { no:304, from:'石川県金沢市',         to:'富山県南砺市' },
+  { no:305, from:'石川県金沢市',         to:'福井県南条郡南越前町' },
+  { no:306, from:'滋賀県彦根市',         to:'三重県津市' },
+  { no:307, from:'滋賀県彦根市',         to:'大阪府枚方市' },
+  { no:308, from:'大阪府大阪市中央区',   to:'奈良県奈良市' },
+  { no:309, from:'三重県熊野市',         to:'大阪府大阪市平野区' },
+  { no:310, from:'大阪府堺市堺区',       to:'奈良県五條市' },
+  { no:311, from:'三重県尾鷲市',         to:'和歌山県西牟婁郡上富田町' },
+  { no:312, from:'京都府宮津市',         to:'兵庫県姫路市' },
+  { no:313, from:'広島県福山市',         to:'鳥取県東伯郡北栄町' },
+  { no:314, from:'広島県福山市',         to:'島根県雲南市' },
+  { no:315, from:'山口県周南市',         to:'山口県萩市' },
+  { no:316, from:'山口県長門市',         to:'山口県山陽小野田市' },
+  { no:317, from:'愛媛県松山市',         to:'広島県尾道市' },
+  { no:318, from:'徳島県徳島市',         to:'香川県東かがわ市' },
+  { no:319, from:'香川県坂出市',         to:'愛媛県四国中央市' },
+  { no:320, from:'高知県宿毛市',         to:'愛媛県北宇和郡鬼北町' },
+  { no:321, from:'高知県四万十市',       to:'高知県宿毛市' },
+  { no:322, from:'福岡県北九州市小倉北区',to:'熊本県山鹿市' },
+  { no:323, from:'佐賀県佐賀市',         to:'佐賀県唐津市' },
+  { no:324, from:'長崎県長崎市',         to:'熊本県宇城市' },
+  { no:325, from:'福岡県久留米市',       to:'熊本県阿蘇市' },
+  { no:326, from:'宮崎県延岡市',         to:'大分県豊後大野市' },
+  { no:327, from:'宮崎県日向市',         to:'熊本県阿蘇郡高森町' },
+  { no:328, from:'鹿児島県鹿児島市',     to:'熊本県出水市' },
+  { no:329, from:'沖縄県名護市',         to:'沖縄県那覇市' },
+  { no:330, from:'沖縄県沖縄市',         to:'沖縄県那覇市' },
+  { no:331, from:'沖縄県那覇市',         to:'沖縄県国頭郡大宜味村' },
+  { no:332, from:'沖縄県那覇市・那覇空港',to:'沖縄県那覇市垣花町' },
+  { no:333, from:'北海道旭川市',         to:'北海道北見市' },
+  { no:334, from:'北海道目梨郡羅臼町',   to:'北海道網走郡美幌町' },
+  { no:335, from:'北海道目梨郡羅臼町',   to:'北海道標津郡標津町' },
+  { no:336, from:'北海道浦河郡浦河町',   to:'北海道釧路市' },
+  { no:337, from:'北海道千歳市',         to:'北海道小樽市' },
+  { no:338, from:'北海道函館市',         to:'青森県上北郡おいらせ町' },
+  { no:339, from:'青森県弘前市',         to:'青森県東津軽郡外ヶ浜町' },
+  { no:340, from:'岩手県陸前高田市',     to:'青森県八戸市' },
+  { no:341, from:'秋田県鹿角市',         to:'秋田県由利本荘市' },
+  { no:342, from:'秋田県横手市',         to:'宮城県登米市' },
+  { no:343, from:'岩手県陸前高田市',     to:'岩手県奥州市' },
+  { no:344, from:'秋田県湯沢市',         to:'山形県酒田市' },
+  { no:345, from:'新潟県新潟市中央区',   to:'山形県飽海郡遊佐町' },
+  { no:346, from:'宮城県仙台市青葉区',   to:'宮城県気仙沼市' },
+  { no:347, from:'山形県寒河江市',       to:'宮城県大崎市' },
+  { no:348, from:'山形県長井市',         to:'山形県山形市' },
+  { no:349, from:'茨城県水戸市',         to:'宮城県柴田郡柴田町' },
+  { no:350, from:'新潟県新潟市中央区',   to:'新潟県上越市' },
+  { no:351, from:'新潟県長岡市',         to:'新潟県小千谷市' },
+  { no:352, from:'新潟県柏崎市',         to:'栃木県河内郡上三川町' },
+  { no:353, from:'群馬県桐生市',         to:'新潟県柏崎市' },
+  { no:354, from:'群馬県高崎市',         to:'茨城県鉾田市' },
+  { no:355, from:'千葉県香取市',         to:'茨城県笠間市' },
+  { no:356, from:'千葉県銚子市',         to:'千葉県我孫子市' },
+  { no:357, from:'千葉県千葉市中央区',   to:'神奈川県横須賀市' },
+  { no:358, from:'山梨県南都留郡富士河口湖町',to:'山梨県甲府市' },
+  { no:359, from:'富山県富山市',         to:'石川県金沢市' },
+  { no:360, from:'富山県富山市',         to:'石川県小松市' },
+  { no:361, from:'岐阜県高山市',         to:'長野県伊那市' },
+  { no:362, from:'愛知県豊川市',         to:'静岡県静岡市葵区' },
+  { no:363, from:'愛知県名古屋市名東区', to:'岐阜県中津川市' },
+  { no:364, from:'福井県大野市',         to:'石川県加賀市' },
+  { no:365, from:'石川県加賀市',         to:'三重県四日市市' },
+  { no:366, from:'愛知県半田市',         to:'愛知県名古屋市緑区' },
+  { no:367, from:'京都府京都市下京区',   to:'福井県三方上中郡若狭町' },
+  { no:368, from:'三重県伊賀市',         to:'三重県多気郡多気町' },
+  { no:369, from:'奈良県奈良市',         to:'三重県松阪市' },
+  { no:370, from:'和歌山県海南市',       to:'奈良県奈良市' },
+  { no:371, from:'大阪府河内長野市',     to:'和歌山県東牟婁郡串本町' },
+  { no:372, from:'京都府亀岡市',         to:'兵庫県姫路市' },
+  { no:373, from:'兵庫県赤穂市',         to:'鳥取県鳥取市' },
+  { no:374, from:'岡山県備前市',         to:'岡山県津山市' },
+  { no:375, from:'広島県呉市',           to:'島根県大田市' },
+  { no:376, from:'山口県山口市',         to:'山口県岩国市' },
+  { no:377, from:'徳島県鳴門市',         to:'香川県観音寺市' },
+  { no:378, from:'愛媛県伊予市',         to:'愛媛県宇和島市' },
+  { no:379, from:'愛媛県松山市',         to:'愛媛県喜多郡内子町' },
+  { no:380, from:'愛媛県八幡浜市',       to:'愛媛県上浮穴郡久万高原町' },
+  { no:381, from:'高知県須崎市',         to:'愛媛県宇和島市' },
+  { no:382, from:'長崎県対馬市',         to:'佐賀県唐津市' },
+  { no:383, from:'長崎県平戸市',         to:'佐賀県伊万里市' },
+  { no:384, from:'長崎県五島市',         to:'長崎県佐世保市' },
+  { no:385, from:'福岡県柳川市',         to:'福岡県福岡市博多区' },
+  { no:386, from:'大分県日田市',         to:'福岡県筑紫野市' },
+  { no:387, from:'大分県宇佐市',         to:'熊本県熊本市北区' },
+  { no:388, from:'大分県佐伯市',         to:'熊本県球磨郡湯前町' },
+  { no:389, from:'福岡県大牟田市',       to:'鹿児島県阿久根市' },
+  { no:390, from:'沖縄県石垣市',         to:'沖縄県那覇市' },
+  { no:391, from:'北海道釧路市',         to:'北海道網走市' },
+  { no:392, from:'北海道釧路市',         to:'北海道中川郡本別町' },
+  { no:393, from:'北海道小樽市',         to:'北海道虻田郡倶知安町' },
+  { no:394, from:'青森県むつ市',         to:'青森県弘前市' },
+  { no:395, from:'岩手県久慈市',         to:'岩手県二戸市' },
+  { no:396, from:'岩手県遠野市',         to:'岩手県盛岡市' },
+  { no:397, from:'岩手県大船渡市',       to:'秋田県横手市' },
+  { no:398, from:'宮城県石巻市',         to:'秋田県由利本荘市' },
+  { no:399, from:'福島県いわき市',       to:'山形県南陽市' },
+  { no:400, from:'茨城県水戸市',         to:'栃木県那須塩原市' },
+  { no:401, from:'福島県会津若松市',     to:'新潟県村上市' },
+  { no:402, from:'新潟県柏崎市',         to:'新潟県新潟市中央区' },
+  { no:403, from:'新潟県新潟市中央区',   to:'長野県松本市' },
+  { no:404, from:'新潟県長岡市',         to:'新潟県上越市' },
+  { no:405, from:'群馬県吾妻郡長野原町', to:'新潟県上越市' },
+  { no:406, from:'長野県長野市',         to:'群馬県高崎市' },
+  { no:407, from:'埼玉県入間郡毛呂山町', to:'栃木県足利市' },
+  { no:408, from:'千葉県成田市',         to:'栃木県塩谷郡高根沢町' },
+  { no:409, from:'神奈川県川崎市川崎区', to:'千葉県成田市' },
+  { no:410, from:'千葉県館山市',         to:'千葉県木更津市' },
+  { no:411, from:'東京都八王子市',       to:'山梨県甲府市' },
+  { no:412, from:'神奈川県平塚市',       to:'神奈川県相模原市' },
+  { no:413, from:'山梨県富士吉田市',     to:'神奈川県相模原市' },
+  { no:414, from:'静岡県下田市',         to:'静岡県沼津市' },
+  { no:415, from:'石川県羽咋市',         to:'富山県富山市' },
+  { no:416, from:'福井県福井市',         to:'石川県小松市' },
+  { no:417, from:'岐阜県大垣市',         to:'福井県南条郡南越前町' },
+  { no:418, from:'福井県大野市',         to:'長野県飯田市' },
+  { no:419, from:'岐阜県瑞浪市',         to:'愛知県高浜市' },
+  { no:420, from:'愛知県豊田市',         to:'愛知県新城市' },
+  { no:421, from:'三重県桑名市',         to:'滋賀県近江八幡市' },
+  { no:422, from:'滋賀県大津市',         to:'三重県尾鷲市' },
+  { no:423, from:'大阪府大阪市北区',     to:'京都府亀岡市' },
+  { no:424, from:'和歌山県田辺市',       to:'和歌山県紀の川市' },
+  { no:425, from:'三重県尾鷲市',         to:'和歌山県御坊市' },
+  { no:426, from:'兵庫県豊岡市',         to:'京都府福知山市' },
+  { no:427, from:'兵庫県明石市',         to:'兵庫県朝来市' },
+  { no:428, from:'兵庫県神戸市中央区',   to:'兵庫県三木市' },
+  { no:429, from:'岡山県倉敷市',         to:'京都府福知山市' },
+  { no:430, from:'岡山県倉敷市',         to:'岡山県玉野市' },
+  { no:431, from:'島根県出雲市',         to:'鳥取県米子市' },
+  { no:432, from:'広島県竹原市',         to:'島根県松江市' },
+  { no:433, from:'広島県大竹市',         to:'広島県三次市' },
+  { no:434, from:'山口県周南市',         to:'広島県三次市' },
+  { no:435, from:'山口県山口市',         to:'山口県下関市' },
+  { no:436, from:'兵庫県姫路市',         to:'香川県高松市' },
+  { no:437, from:'愛媛県松山市',         to:'山口県岩国市' },
+  { no:438, from:'徳島県徳島市',         to:'香川県坂出市' },
+  { no:439, from:'徳島県徳島市',         to:'高知県四万十市' },
+  { no:440, from:'愛媛県松山市',         to:'高知県高岡郡檮原町' },
+  { no:441, from:'愛媛県大洲市',         to:'高知県四万十市' },
+  { no:442, from:'大分県大分市',         to:'福岡県大川市' },
+  { no:443, from:'福岡県大川市',         to:'熊本県八代郡氷川町' },
+  { no:444, from:'長崎県大村市',         to:'佐賀県佐賀市' },
+  { no:445, from:'熊本県熊本市中央区',   to:'熊本県人吉市' },
+  { no:446, from:'宮崎県日向市',         to:'熊本県球磨郡湯前町' },
+  { no:447, from:'宮崎県えびの市',       to:'鹿児島県出水市' },
+  { no:448, from:'鹿児島県指宿市',       to:'宮崎県宮崎市' },
+  { no:449, from:'沖縄県国頭郡本部町',   to:'沖縄県名護市' },
+  { no:450, from:'北海道旭川市',         to:'北海道紋別市' },
+  { no:451, from:'北海道留萌市',         to:'北海道滝川市' },
+  { no:452, from:'北海道夕張市',         to:'北海道旭川市' },
+  { no:453, from:'北海道札幌市豊平区',   to:'北海道伊達市' },
+  { no:454, from:'青森県八戸市',         to:'青森県南津軽郡大鰐町' },
+  { no:455, from:'岩手県盛岡市',         to:'岩手県下閉伊郡岩泉町' },
+  { no:456, from:'岩手県盛岡市',         to:'宮城県気仙沼市' },
+  { no:457, from:'岩手県一関市',         to:'宮城県白石市' },
+  { no:458, from:'山形県新庄市',         to:'山形県上山市' },
+  { no:459, from:'新潟県新潟市中央区',   to:'福島県双葉郡浪江町' },
+  { no:460, from:'新潟県新発田市',       to:'新潟県柏崎市' },
+  { no:461, from:'栃木県日光市',         to:'茨城県高萩市' },
+  { no:462, from:'長野県佐久市',         to:'群馬県伊勢崎市' },
+  { no:463, from:'埼玉県越谷市',         to:'埼玉県入間市' },
+  { no:464, from:'千葉県松戸市',         to:'千葉県成田市' },
+  { no:465, from:'千葉県茂原市',         to:'千葉県富津市' },
+  { no:466, from:'東京都世田谷区',       to:'神奈川県横浜市保土ケ谷区' },
+  { no:467, from:'神奈川県大和市',       to:'神奈川県藤沢市' },
+  { no:468, from:'神奈川県横浜市金沢区', to:'千葉県木更津市' },
+  { no:469, from:'静岡県御殿場市',       to:'静岡県富士市' },
+  { no:470, from:'石川県輪島市',         to:'石川県七尾市' },
+  { no:471, from:'石川県羽咋市',         to:'岐阜県高山市' },
+  { no:472, from:'富山県高岡市',         to:'岐阜県郡上市' },
+  { no:473, from:'愛知県蒲郡市',         to:'静岡県牧之原市' },
+  { no:474, from:'長野県飯田市',         to:'静岡県浜松市浜名区' },
+  { no:475, from:'愛知県豊田市',         to:'三重県四日市市' },
+  { no:476, from:'福井県大野市',         to:'福井県敦賀市' },
+  { no:477, from:'三重県四日市市',       to:'大阪府池田市' },
+  { no:478, from:'京都府宮津市',         to:'京都府久世郡久御山町' },
+  { no:479, from:'大阪府豊中市',         to:'大阪府大阪市住之江区' },
+  { no:480, from:'大阪府泉大津市',       to:'和歌山県有田市' },
+  { no:481, from:'大阪府泉佐野市・関西国際空港',to:'大阪府泉佐野市上之郷' },
+  { no:482, from:'京都府宮津市',         to:'鳥取県米子市' },
+  { no:483, from:'兵庫県豊岡市',         to:'兵庫県丹波市' },
+  { no:484, from:'岡山県備前市',         to:'岡山県高梁市' },
+  { no:485, from:'島根県隠岐郡隠岐の島町',to:'島根県松江市' },
+  { no:486, from:'岡山県総社市',         to:'広島県東広島市' },
+  { no:487, from:'広島県呉市',           to:'広島県広島市南区' },
+  { no:488, from:'島根県益田市',         to:'広島県廿日市市' },
+  { no:489, from:'山口県周南市',         to:'山口県山口市' },
+  { no:490, from:'山口県宇部市',         to:'山口県萩市' },
+  { no:491, from:'山口県下関市',         to:'山口県長門市' },
+  { no:492, from:'香川県高松市',         to:'徳島県美馬市' },
+  { no:493, from:'高知県安芸市',         to:'高知県高知市' },
+  { no:494, from:'愛媛県松山市',         to:'高知県須崎市' },
+  { no:495, from:'福岡県北九州市若松区', to:'福岡県福岡市東区' },
+  { no:496, from:'大分県日田市',         to:'福岡県行橋市' },
+  { no:497, from:'長崎県佐世保市',       to:'長崎県松浦市' },
+  { no:498, from:'佐賀県鹿島市',         to:'長崎県佐世保市' },
+  { no:499, from:'長崎県長崎市',         to:'鹿児島県阿久根市' },
+  { no:500, from:'佐賀県鳥栖市',         to:'大分県別府市' },
+  { no:501, from:'福岡県大牟田市',       to:'熊本県宇土市' },
+  { no:502, from:'大分県臼杵市',         to:'大分県竹田市' },
+  { no:503, from:'熊本県阿蘇郡高森町',   to:'宮崎県延岡市' },
+  { no:504, from:'鹿児島県鹿屋市',       to:'鹿児島県出水市' },
+  { no:505, from:'沖縄県国頭郡本部町',   to:'沖縄県名護市' },
+  { no:506, from:'沖縄県那覇市',         to:'沖縄県中頭郡西原町' },
+  { no:507, from:'沖縄県糸満市',         to:'沖縄県那覇市' },
+];
+
 // ===== 特殊フォントが必要な形式のfontFamilyスタイルを返す =====
 const SPECIAL_FONT_STYLES: Record<string, React.CSSProperties> = {
   tangut:            { fontFamily: "'Noto Serif Tangut', serif" },
@@ -427,6 +891,7 @@ const App = () => {
   ]);
   const [isHpBalanceEnabled, setIsHpBalanceEnabled] = useState(true);
   const [isBarrierEventEnabled, setIsBarrierEventEnabled] = useState(true); // 無敵バリアカードイベント
+  const [isRoadEventEnabled, setIsRoadEventEnabled] = useState(true); // 国道ダメージ/回復イベント
   const [isSpecialMultiEnabled, setIsSpecialMultiEnabled] = useState(false); // 特別イベント重複発動
   const [specialMultiProb, setSpecialMultiProb] = useState(30); // 重複発動確率（%）
   const [isSpectatorMode, setIsSpectatorMode] = useState(false); // 観戦モード（ホストのみ）
@@ -689,6 +1154,7 @@ const App = () => {
     // reviveEventsはundefinedの場合は空配列で設定
     setReviveEvents(Array.isArray(s.reviveEvents) ? s.reviveEvents : []);
     if (s.isBarrierEventEnabled !== undefined) setIsBarrierEventEnabled(s.isBarrierEventEnabled);
+    if (s.isRoadEventEnabled !== undefined) setIsRoadEventEnabled(s.isRoadEventEnabled);
     if (s.isSpecialMultiEnabled !== undefined) setIsSpecialMultiEnabled(s.isSpecialMultiEnabled);
     if (s.specialMultiProb !== undefined) setSpecialMultiProb(s.specialMultiProb);
   };
@@ -837,6 +1303,7 @@ const App = () => {
     let localNumberFmt = 'default';
     let isBarrierGift = false; // 無敵バリアカード付与イベント（1枚）
     let isBarrierMegaGift = false; // 無敵バリアカード10枚付与イベント
+    let roadEventData: JapanRoad | null = null; // 国道ダメージ/回復イベント
 
     const isSpecialActive = isSpecialEventEnabled
       && Math.random() < (specialEventProb / 100)
@@ -855,6 +1322,7 @@ const App = () => {
       if (enabledSpecialEvents.includes('numberFormat') && enabledFormats.length > 0) logicPool.push('numberFormat');
       if (isBarrierEventEnabled)                              logicPool.push('barrierGift');
       if (isBarrierEventEnabled && Math.random() < 0.10)      logicPool.push('barrierMegaGift');
+      if (isRoadEventEnabled)                                 logicPool.push('roadEvent');
 
       // 重複発動モード：確率を満たすごとに最大3個まで選択（互いに競合しない組み合わせ）
       const applyEvent = (choice: string) => {
@@ -871,6 +1339,9 @@ const App = () => {
         }
         else if (choice === 'barrierGift') { isBarrierGift = true; }
         else if (choice === 'barrierMegaGift') { isBarrierMegaGift = true; }
+        else if (choice === 'roadEvent') {
+          roadEventData = JAPAN_ROADS[Math.floor(Math.random() * JAPAN_ROADS.length)];
+        }
       };
 
       if (logicPool.length > 0) {
@@ -922,6 +1393,8 @@ const App = () => {
       } else if (isBarrierGift || isBarrierMegaGift) {
         const amount = isBarrierMegaGift ? 'BARRIER+10' : 'BARRIER+1';
         setDisplayResult({ player: `🛡️ ${nameDisp}`, amount });
+      } else if (roadEventData) {
+        setDisplayResult({ player: `🛣️ 国道${roadEventData.no}号`, amount: `${roadEventData.from}→${roadEventData.to}` });
       } else if (isDice && diceResult) {
         const prefix = isReverse ? '【以外】' : (isMulti ? '【複数】' : '');
         // スピン中はランダムなダイス値をアニメーション表示
@@ -945,7 +1418,8 @@ const App = () => {
             isReverse, isMulti, weightedPlayers,
             isFeint, isInstantDeath, isReverseHealDamage,
             isDice, diceResult,
-            localNumberFmt, isBarrierGift, isBarrierMegaGift
+            localNumberFmt, isBarrierGift, isBarrierMegaGift,
+            roadEventData
           );
         }
       }
@@ -973,7 +1447,8 @@ const App = () => {
     diceResult: { rolls: number[]; total: number; faceMax: number } | null,
     fmt: string,
     isBarrierGift: boolean = false,
-    isBarrierMegaGift: boolean = false
+    isBarrierMegaGift: boolean = false,
+    roadEventData: JapanRoad | null = null
   ) => {
     let chosenPlayer = selectWeightedPlayer(weightedPlayers);
     let reviveTarget: Player | undefined;
@@ -1050,6 +1525,65 @@ const App = () => {
         setPlayers(updatedPlayers);
         setLastResult({ player: chosenPlayer.name, targetIds, amount: 'BARRIER+10', type: 'barrier', isReverse: false, isMulti: false });
         setLogs(prev => [{ id: Date.now(), turn, type: 'system', message: customLogData!.message||'', target: chosenPlayer.name, amount: 'BARRIER+10' }, ...prev]);
+        setTimeout(() => { setIsSpinning(false); setTurn(t => t + 1); }, 1500);
+      }
+      return;
+    }
+
+    // ===== 国道ダメージ/回復イベント =====
+    if (roadEventData) {
+      const roadAmount = roadEventData.no; // 国道番号がダメージ/回復量
+      finalAmount = roadAmount;
+      targetIds = [chosenPlayer.id];
+      const logType = effectType === 'heal' ? 'heal' : 'damage';
+      const roadLabel = `国道${roadEventData.no}号（${roadEventData.from}→${roadEventData.to}）`;
+      if (effectType === 'heal') {
+        updatedPlayers = updatedPlayers.map(p =>
+          p.id === chosenPlayer.id ? { ...p, hp: p.hp + roadAmount } : p
+        );
+        customLogData = { type: logType, message: `🛣️ ${chosenPlayer.name}に${roadLabel}で${roadAmount}回復！`, target: chosenPlayer.name, amount: roadAmount };
+      } else {
+        const actualDmg = Math.min(roadAmount, chosenPlayer.hp);
+        updatedPlayers = updatedPlayers.map(p =>
+          p.id === chosenPlayer.id ? { ...p, hp: Math.max(0, p.hp - roadAmount) } : p
+        );
+        customLogData = { type: logType, message: `🛣️ ${chosenPlayer.name}に${roadLabel}で${actualDmg}ダメージ！`, target: chosenPlayer.name, amount: roadAmount };
+      }
+      const roadDisplayAmount = `${roadEventData.from}→${roadEventData.to}`;
+      setDisplayResult({ player: `🛣️ 国道${roadEventData.no}号 → ${chosenPlayer.name}`, amount: roadDisplayAmount });
+      setAnimatingPlayerIds([chosenPlayer.id]);
+      setAnimatingType(effectType === 'heal' ? 'heal' : 'damage');
+      await new Promise(r => setTimeout(r, 800));
+      setAnimatingPlayerIds([]); setAnimatingType(null);
+
+      // 脱落チェック
+      const eliminated2 = [...eliminated];
+      updatedPlayers = updatedPlayers.map(p => {
+        if (p.id === chosenPlayer.id && p.status === 'alive' && p.hp <= 0 && (p.barriers || 0) <= 0) {
+          eliminated2.push({ name: p.name, turn });
+          return { ...p, status: 'dead' as const, hp: 0 };
+        }
+        return p;
+      });
+
+      if (isMultiplayer && currentRoomId) {
+        try {
+          await API.patchRoom(currentRoomId, {
+            players: updatedPlayers,
+            'gameState.turn': turn + 1,
+            'gameState.logs': [{ id: Date.now(), turn, type: logType, message: customLogData.message, target: chosenPlayer.name, amount: roadAmount }, ...logs].slice(0, 100),
+            'gameState.eliminated': eliminated2,
+            'gameState.isSpinning': false,
+            'gameState.displayResult': { player: `🛣️ 国道${roadEventData.no}号 → ${chosenPlayer.name}`, amount: roadDisplayAmount },
+            'gameState.lastResult': { player: chosenPlayer.name, targetIds, amount: roadAmount, type: logType, isReverse: false, isMulti: false },
+          });
+          setIsSpinning(false);
+        } catch { setIsSpinning(false); }
+      } else {
+        setPlayers(updatedPlayers);
+        setEliminated(eliminated2);
+        setLastResult({ player: chosenPlayer.name, targetIds, amount: roadAmount, type: logType, isReverse: false, isMulti: false });
+        setLogs(prev => [{ id: Date.now(), turn, type: logType, message: customLogData!.message||'', target: chosenPlayer.name, amount: roadAmount }, ...prev]);
         setTimeout(() => { setIsSpinning(false); setTurn(t => t + 1); }, 1500);
       }
       return;
@@ -1383,7 +1917,7 @@ const App = () => {
         settings: { title, mode, teamCount, teamNames, initialHP, spinDuration, healInterval,
           isHpBalanceEnabled, isSpecialEventEnabled, specialEventProb, enabledSpecialEvents,
           diceConfig, enabledFormats, config, reviveEvents,
-          isBarrierEventEnabled, isSpecialMultiEnabled, specialMultiProb },
+          isBarrierEventEnabled, isRoadEventEnabled, isSpecialMultiEnabled, specialMultiProb },
         players: [],
         gameState: { turn: 1, logs: [], eliminated: [], isSpinning: false,
           displayResult: { player: '\uff1f\uff1f\uff1f', amount: '\uff1f' }, lastResult: null }
@@ -1850,6 +2384,11 @@ const App = () => {
                       <button onClick={() => setIsBarrierEventEnabled(!isBarrierEventEnabled)} className={`w-full p-2.5 rounded-xl border flex items-center justify-between transition-all ${isBarrierEventEnabled ? 'bg-cyan-600/20 border-cyan-500/50 text-cyan-100' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>
                         <span className="text-[9px] font-bold flex items-center gap-2">🛡️ 無敵バリアカード付与</span>
                         <div className={`w-2 h-2 rounded-full ${isBarrierEventEnabled ? 'bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.6)]' : 'bg-slate-700'}`}/>
+                      </button>
+                      {/* 国道ダメージ/回復イベント */}
+                      <button onClick={() => setIsRoadEventEnabled(!isRoadEventEnabled)} className={`w-full p-2.5 rounded-xl border flex items-center justify-between transition-all ${isRoadEventEnabled ? 'bg-orange-600/20 border-orange-500/50 text-orange-100' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>
+                        <span className="text-[9px] font-bold flex items-center gap-2">🛣️ 国道ダメージ/回復</span>
+                        <div className={`w-2 h-2 rounded-full ${isRoadEventEnabled ? 'bg-orange-400 shadow-[0_0_8px_rgba(251,146,60,0.6)]' : 'bg-slate-700'}`}/>
                       </button>
                       {/* 特別イベント重複発動 */}
                       <button onClick={() => setIsSpecialMultiEnabled(!isSpecialMultiEnabled)} className={`w-full p-2.5 rounded-xl border flex items-center justify-between transition-all ${isSpecialMultiEnabled ? 'bg-amber-600/20 border-amber-500/50 text-amber-100 rounded-b-none border-b-0' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>
