@@ -1394,7 +1394,9 @@ const App = () => {
         const amount = isBarrierMegaGift ? 'BARRIER+10' : 'BARRIER+1';
         setDisplayResult({ player: `🛡️ ${nameDisp}`, amount });
       } else if (roadEventData) {
-        setDisplayResult({ player: `🛣️ 国道${roadEventData.no}号`, amount: `${roadEventData.from}→${roadEventData.to}` });
+        // 国道イベント：通常のルーレットと同じく「プレイヤー名 / 起点→終点」で回す
+        const prefix = isReverse ? '【以外】' : (isMulti ? '【複数】' : '');
+        setDisplayResult({ player: `${prefix}${nameDisp}`, amount: `${roadEventData.from}→${roadEventData.to}` });
       } else if (isDice && diceResult) {
         const prefix = isReverse ? '【以外】' : (isMulti ? '【複数】' : '');
         // スピン中はランダムなダイス値をアニメーション表示
@@ -1550,7 +1552,8 @@ const App = () => {
         customLogData = { type: logType, message: `🛣️ ${chosenPlayer.name}に${roadLabel}で${actualDmg}ダメージ！`, target: chosenPlayer.name, amount: roadAmount };
       }
       const roadDisplayAmount = `${roadEventData.from}→${roadEventData.to}`;
-      setDisplayResult({ player: `🛣️ 国道${roadEventData.no}号 → ${chosenPlayer.name}`, amount: roadDisplayAmount });
+      // 確定後：player=プレイヤー名、amount=起点→終点（国道番号はログのみ）
+      setDisplayResult({ player: chosenPlayer.name, amount: roadDisplayAmount });
       setAnimatingPlayerIds([chosenPlayer.id]);
       setAnimatingType(effectType === 'heal' ? 'heal' : 'damage');
       await new Promise(r => setTimeout(r, 800));
@@ -1574,7 +1577,7 @@ const App = () => {
             'gameState.logs': [{ id: Date.now(), turn, type: logType, message: customLogData.message, target: chosenPlayer.name, amount: roadAmount }, ...logs].slice(0, 100),
             'gameState.eliminated': eliminated2,
             'gameState.isSpinning': false,
-            'gameState.displayResult': { player: `🛣️ 国道${roadEventData.no}号 → ${chosenPlayer.name}`, amount: roadDisplayAmount },
+            'gameState.displayResult': { player: chosenPlayer.name, amount: roadDisplayAmount },
             'gameState.lastResult': { player: chosenPlayer.name, targetIds, amount: roadAmount, type: logType, isReverse: false, isMulti: false },
           });
           setIsSpinning(false);
@@ -2597,6 +2600,8 @@ const App = () => {
   const totalSurvivorHp = survivorsSorted.reduce((s,p) => s + p.hp, 0);
   // ダイス表示かどうか
   const isDiceDisplay = typeof displayResult.amount === 'string' && String(displayResult.amount).includes('[') && String(displayResult.amount).includes('d');
+  // 国道起点→終点表示かどうか（「→」を含み数値でない文字列）
+  const isRoadDisplay = typeof displayResult.amount === 'string' && String(displayResult.amount).includes('→') && isNaN(Number(displayResult.amount));
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-4 md:p-6 flex flex-col md:flex-row gap-6 max-w-[1500px] mx-auto font-sans md:overflow-hidden md:h-screen">
@@ -2646,6 +2651,10 @@ const App = () => {
             {isDiceDisplay
               ? <div className={`text-2xl md:text-4xl font-black leading-tight transition-all duration-75 tabular-nums text-center break-all ${isSpinning ? 'text-slate-800 scale-95 blur-[2px]' : (lastResult?.type==='heal' || lastResult?.type==='revive' ? 'text-emerald-400' : 'text-red-600')}`}
                   style={getNumberFontStyle(activeNumberFormat)}>
+                  {String(displayResult.amount)}
+                </div>
+              : isRoadDisplay
+              ? <div className={`text-lg md:text-2xl font-black leading-snug transition-all duration-75 text-center break-all px-2 ${isSpinning ? 'text-slate-800 scale-95 blur-[2px]' : (lastResult?.type==='heal' || lastResult?.type==='revive' ? 'text-emerald-400' : 'text-orange-400')}`}>
                   {String(displayResult.amount)}
                 </div>
               : <div className={`text-[5rem] md:text-[8rem] lg:text-[9rem] font-black leading-none transition-all duration-75 tabular-nums break-all ${isSpinning ? 'text-slate-800 scale-95 blur-[2px]' : (lastResult?.type==='heal' || lastResult?.type==='revive' ? 'text-emerald-400' : 'text-red-600')}`}
